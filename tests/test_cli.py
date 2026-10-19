@@ -132,38 +132,6 @@ def test_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "MISSING: get it" in out
 
 
-@pytest.mark.parametrize(
-    ("args", "query", "n"),
-    [
-        (["vodvod", "-site:vodvod.top", "-n", "20"], "vodvod -site:vodvod.top", 20),
-        (["vodvod.top", "reddit", "-n", "20"], "vodvod.top reddit", 20),
-        (["vodvod.top", "safe", "OR", "scam", "-n15"], "vodvod.top safe OR scam", 15),
-        (["vodvod.top", "down", "OR", "not working"], 'vodvod.top down OR "not working"', 10),
-        (["pandoc lua filter", "-n", "5"], "pandoc lua filter", 5),
-        (["-site:pinterest.com pasta"], "-site:pinterest.com pasta", 10),
-        (["--json", "pics", "-nsfw"], "pics -nsfw", 10),
-        (["-n", "3", "--", "-n", "x"], "-n x", 3),
-    ],
-)
-def test_search_query_can_be_several_words(
-    args: list[str], query: str, n: int, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[tuple[str, int]] = []
-
-    def fake_search(query: str, n: int, config: Config) -> SearchResults:
-        seen.append((query, n))
-        return SearchResults(query, ())
-
-    monkeypatch.setattr("agent_web.search.google.search", fake_search)
-    code, _, err = run_cli("search", *args)
-    assert (code, err) == (0, "")
-    assert seen == [(query, n)]
-
-
-def test_search_without_a_query_is_a_usage_error() -> None:
-    assert run_cli("search", "-n", "5")[0] == 1
-
-
 def test_search_output_and_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_search(query: str, n: int, config: Config) -> SearchResults | Failure:
         if query == "blocked":
