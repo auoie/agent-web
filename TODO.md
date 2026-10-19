@@ -1,7 +1,7 @@
 # Ideas and known issues
 
-Not planned yet; kept simple for now. Research behind these:
-`claude-efficiency/agent-web-alternatives.md` and `claude-efficiency/agent-web-design.md`.
+Not planned yet; kept simple for now. Research behind these: `docs/alternatives.md` and
+`docs/decisions.md`.
 
 ## Ideas
 

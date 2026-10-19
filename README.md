@@ -159,6 +159,12 @@ ln -s ~/Documents/agent-web/skills/web ~/.claude/skills/web
 ln -s ~/Documents/agent-web/skills/web ~/.agents/skills/web
 ```
 
+Agents always see the skill's one-line description, and load the full instructions when a task
+matches it (or when you type `/web` in Claude Code). If an agent ever skips the skill and reaches
+for `curl` instead, add a line to the instructions it reads every session (`AGENTS.md` for Codex
+and OpenCode, `CLAUDE.md` for Claude Code), e.g. "For anything on the internet, use the `web`
+command (see the `web` skill)."
+
 Finally, turn off each agent's built-in web tools, so agents don't fall back to them, and choose
 what runs without asking. Read the warning under [Security](#security) before letting
 `web fetch` run without asking.
@@ -236,6 +242,18 @@ Title: Example
 
 `--json` prints the same data as JSON.
 
+**`--find TEXT`** splits the page into blocks at blank lines (a paragraph, list, table or code
+block) and prints every block containing TEXT (plain text, case-insensitive), each labeled with
+its offset and the nearest heading or PDF page marker. Matches are counted per block, not per
+occurrence. Blocks are added in page order until `--max-chars` is used up; the header says how many
+matched and how many are shown. A single block longer than the limit is cut to a window around
+the match.
+
+**Cache:** results are kept for an hour in `~/.cache/agent-web` (200 MB, oldest removed first), so
+`--offset` and `--find` on the same page don't download it again; `--refresh` skips it. Error,
+block and nearly empty pages aren't cached. Changing `cookie_domains`, the browser or
+`--whole-page` never serves an old result. Downloaded PDFs and binary files are saved there too.
+
 Exit codes:
 - 0: ok
 - 1: usage, config or missing tool
@@ -275,6 +293,10 @@ Conventions:
   `src/agent_web/convert/clean.lua` and the lxml pass in `convert/html.py`.
 - **Network tests use a local HTTP server** (`tests/conftest.py`). The Google parser is tested
   against a sanitized real results page.
+- **Bump `FORMAT_VERSION` in `cache.py` whenever conversion output changes,** or results converted
+  by the old code keep being served from the cache for up to an hour.
+- **Record what you learn.** Design decisions and their reasons go in `docs/decisions.md`; ideas and
+  known issues go in `TODO.md`.
 
 Layout:
 - `src/agent_web/`:
@@ -286,6 +308,9 @@ Layout:
   - `invisible.py`: tag characters and control codes.
   - `cache.py`, `output.py`.
 - `skills/web/SKILL.md`: the skill.
+- `docs/`: `decisions.md` (why it's built this way), `alternatives.md` (existing tools compared),
+  `built-in-tools.md` (what Claude Code, OpenCode and Codex's own web tools do).
+- `TODO.md`: ideas and known issues.
 
 ## License
 
