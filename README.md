@@ -31,6 +31,41 @@ from the wrong table row, conclusions reversed. agent-web prints the source itse
   - Redirects `WebFetch`/`WebSearch` to it.
   - Auto-approves fetches only for URLs you typed or a search returned (see Security).
 
+## Token cost
+
+Measured on 2026-10-19 with `bench/tokens.py`. Every tool reads the same downloaded bytes.
+Counts use tiktoken's o200k_base as a proxy, since Claude's tokenizer isn't public: absolute
+numbers differ, ratios hold. ✗ means the page's real content (a sentence, or a number from the
+table) is missing.
+
+| Page | `curl` | `curl` + html2text | `curl` + pandoc | WebFetch → Haiku | trafilatura | **agent-web** | agent-web `--find` |
+| :- | -: | -: | -: | -: | -: | -: | -: |
+| Wikipedia table | 124,154 | 23,462 | 64,828 | 23,537 | 1,647 ✗ | **17,809** | 7,566 |
+| News article | 43,875 | 7,138 | 8,916 | 6,864 | 564 ✗ | **5,249** | 230 |
+| Blog post | 6,410 | 2,277 | 2,943 | 2,228 | 1,727 | **2,213** | 232 |
+| Link post | 5,361 | 1,621 | 2,583 | 1,313 | 550 | **1,562** | 355 |
+| Python docs | 95,016 | 22,305 | 81,951 | 24,979 | 20,297 | **25,529** | 358 |
+| GitHub README | 129,674 | 6,736 | 70,188 | 6,644 | 1,307 | **5,866** | 1,346 |
+| Tiny page | 310 | 43 | 39 | 43 | 33 | **38** | 8 |
+| **Total** | 404,800 | 63,582 | 231,448 | 65,608 | 26,125 | **58,266** | 10,095 |
+
+- **Against raw `curl`:** about 86% fewer tokens (7×). Against `curl` + plain pandoc, 75% fewer.
+- **Against a plain converter (html2text):** about the same size (8% fewer). agent-web's edge
+  there is fidelity: merged table cells, strikethrough, hidden-text labels and problem notes.
+- **Against article extraction (trafilatura):** trafilatura is cheapest, but it dropped the table's
+  numbers on Wikipedia and grabbed sidebar headlines instead of the article on The Register.
+- **Against WebFetch:** the WebFetch column is what *Haiku* reads. Claude itself gets only Haiku's
+  short answer, which is the cheapest for Claude and also the source of the made-up details.
+- **`--find`** reads only matching passages: about 83% fewer tokens than the full page.
+
+Reproduce:
+
+```bash
+uv run --with tiktoken --with trafilatura --with html2text bench/tokens.py
+```
+
+Set `TURNDOWN_DIR` to a folder with `node_modules/turndown` to include the WebFetch column.
+
 ## Privacy
 
 There are no middlemen and no proxies:

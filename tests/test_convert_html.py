@@ -103,6 +103,22 @@ def test_links_are_absolute_and_clean(pandoc: Pandoc) -> None:
     assert "tip" not in out
 
 
+def test_same_page_links(pandoc: Pandoc) -> None:
+    out = md(
+        '<h2>Usage<a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>'
+        '<p>See <a href="#add">add_argument()</a> and <a href="page.html#x">x</a> or '
+        '<a href="other.html#y">y</a>.<a href="#top"></a><a href="#icon"><img src="i.png" '
+        'alt="icon"></a></p>',
+        pandoc,
+    )
+    assert out.splitlines()[0] == "## Usage"
+    assert "¶" not in out
+    assert "[add_argument()](#add)" in out
+    assert "[x](#x)" in out  # page.html is this page
+    assert "[y](https://example.com/dir/other.html#y)" in out
+    assert "[![icon](https://example.com/dir/i.png)](#icon)" in out
+
+
 def test_layout_wrappers_and_junk_are_removed(pandoc: Pandoc) -> None:
     out = md(
         """<div class="page" id="main"><span class="x">Real text</span></div>

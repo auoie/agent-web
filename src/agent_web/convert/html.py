@@ -56,6 +56,9 @@ _HEAD_TAGS = frozenset({"title", "base", "link", "meta", "style", "script", "tem
 # elements is the boilerplate that behavior is meant to drop; other outside text is reported.
 _BOILERPLATE_TAGS = frozenset({"nav", "header", "footer", "aside", "menu", "form", "button"})
 
+# Text of "permalink to this heading" anchors (Sphinx, MkDocs, GitHub, ...): noise for a reader.
+_PERMALINK_TEXT = frozenset({"¶", "#", "§", "🔗", "link", "permalink", "anchor"})
+
 # Hidden fragments shorter than this (counters, icons) can't carry an instruction; they stay in
 # the text unlabeled instead of triggering a note.
 MIN_HIDDEN_CHARS = 12
@@ -171,6 +174,26 @@ def _rescue_head_content(doc: lxml.html.HtmlElement) -> None:
         body.insert(index, element)  # moves the element (and its tail text) out of <head>
 
 
+def _tidy_same_page_links(doc: lxml.html.HtmlElement, page_url: str) -> None:
+    """Drop permalink anchors and shorten other links within the page to `#fragment`.
+
+    Repeating the full page URL on every in-page cross-reference costs a lot of tokens on
+    documentation pages without telling the reader anything.
+    """
+    page = page_url.split("#", 1)[0]
+    for link in list(doc.iter("a")):
+        if not isinstance(link, lxml.html.HtmlElement):
+            continue
+        href = link.get("href") or ""
+        if not href.startswith(page + "#"):
+            continue
+        text = " ".join(link.text_content().split())
+        if len(link) == 0 and text.lower() in _PERMALINK_TEXT | {""}:
+            _remove(link)
+        else:
+            link.set("href", href[len(page) :])
+
+
 def _is_hidden(element: lxml.html.HtmlElement) -> bool:
     if element.get("hidden") is not None:
         return True
@@ -221,6 +244,7 @@ def prepare(html_text: str, base_url: str, whole_page: bool = False) -> Prepared
     title = " ".join((doc.findtext(".//title") or "").split())
     _rescue_head_content(doc)
     doc.make_links_absolute(base_url, resolve_base_href=True, handle_failures="discard")
+    _tidy_same_page_links(doc, base_url)
 
     for node in list(doc.iter(*_DROP_TAGS, etree.Comment)):
         _remove(node)
