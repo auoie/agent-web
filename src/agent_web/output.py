@@ -131,8 +131,9 @@ def describe_issue(issue: Issue) -> str:
             )
         case CookiesMightHelp(domain):
             return (
-                f"{domain} blocks anonymous requests. Adding {domain!r} to fetch.cookie_domains in "
-                "the agent-web config sends your browser session to it"
+                f"{domain} blocked an anonymous request. If the user agrees, adding {domain!r} to "
+                "fetch.cookie_domains in ~/.config/agent-web/config.toml sends their browser "
+                "session there, which often gets through"
             )
         case ConversionFallback(reason):
             return reason

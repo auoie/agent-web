@@ -170,15 +170,30 @@ def test_reddit_thread_via_json(
     assert "u/Comfortable-Hall-188" in result.content.markdown
 
 
-def test_reddit_blocked_suggests_cookies(
+def test_blocked_reddit_thread_suggests_cookies(
     server: Server, config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     server.routes["/comments/abc123.json"] = Route(status=403, body=b"blocked")
     server.routes["/thread"] = server.routes["/captcha"]
     route_reddit_to(server, monkeypatch)
     result = ok(server.url("/thread"), config)
-    assert CookiesMightHelp("reddit.com") in result.issues
+    assert CookiesMightHelp("127.0.0.1") in result.issues
     assert any(isinstance(issue, BotCheck) for issue in result.issues)
+
+
+def test_any_blocked_site_suggests_cookies_unless_already_listed(
+    server: Server, config: Config
+) -> None:
+    assert CookiesMightHelp("127.0.0.1") in ok(server.url("/captcha"), config).issues
+
+    class NoCookiesInBrowser:
+        def for_url(self, url: str) -> dict[str, str]:
+            return {}
+
+    listed = replace(config, cookie_domains=("127.0.0.1",))
+    result = fetch(server.url("/captcha"), listed, refresh=True, cookie_source=NoCookiesInBrowser())
+    assert isinstance(result, FetchResult)
+    assert not any(isinstance(issue, CookiesMightHelp) for issue in result.issues)
 
 
 def test_invisible_characters_are_revealed_in_every_text_field() -> None:

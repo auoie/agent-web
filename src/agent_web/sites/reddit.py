@@ -13,7 +13,6 @@ from agent_web.urls import domain_matches
 
 _COMMENTS_PATH = re.compile(r"^/(?:r/[^/]+/)?comments/([a-z0-9]{2,12})(?:/|$)", re.IGNORECASE)
 _SHORT_PATH = re.compile(r"^/([a-z0-9]{2,12})/?$", re.IGNORECASE)
-COOKIE_DOMAIN = "reddit.com"
 
 
 def thread_id(url: str) -> str | None:

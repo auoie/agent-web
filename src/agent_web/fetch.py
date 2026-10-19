@@ -207,8 +207,10 @@ def fetch(
     content, found_issues = reveal_invisible(*converted)
     issues.extend(found_issues)
 
-    if post_id is not None and not response.cookies_sent and _looks_blocked(issues):
-        issues.append(CookiesMightHelp(reddit.COOKIE_DOMAIN))
+    host = hostname(response.url)
+    listed = any(domain_matches(host, domain) for domain in config.cookie_domains)
+    if not response.cookies_sent and not listed and _looks_blocked(issues):
+        issues.append(CookiesMightHelp(host.removeprefix("www.")))
 
     result = FetchResult(content, tuple(issues))
     if cacheable(result):

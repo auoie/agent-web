@@ -248,7 +248,8 @@ Exit codes:
 - **No JavaScript.** Pages that build their content in the browser come out nearly empty; this is
   flagged.
 - **Bot protection.** Cloudflare-protected sites (Stack Overflow, for example) and anonymous Reddit
-  serve block pages; these are flagged. For Reddit, adding it to `cookie_domains` helps.
+  serve block pages. These are flagged with a suggestion to add the site to `cookie_domains`, which
+  often gets through (it does for Reddit and Stack Overflow).
 - **PDF tables and formulas** are reconstructed from layout and can be garbled; this is flagged.
 - **Google's page layout can change.** Search parsing is structural (a link containing an `<h3>`),
   and `just test-live` catches drift.
