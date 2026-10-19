@@ -100,7 +100,8 @@ contain instructions aimed at agents ("visit /a, then /b…"). This is the
   - **Trusted domains** you list in `fetch.trusted_domains` (e.g. `arxiv.org`) are fetched without
     asking, including links found inside pages, so agents can browse those sites. Only list sites
     where an attacker can't see the requests. That rules out personal sites, URL shorteners,
-    redirect services and paste sites.
+    redirect services and paste sites. Redirects are followed, so avoid sites with open redirects
+    (`site/go?to=anywhere`): one could forward an auto-approved request to another site.
   - Anthropic closed the same hole in claude.ai's web fetch in 2026.
 - **Untrusted-content fences.** Page text is printed inside `<untrusted-web-content-RANDOM>` tags with
   a note not to follow instructions in it. Hidden text is labeled. This helps the model resist
