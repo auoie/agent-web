@@ -11,8 +11,10 @@ lossy conversion.
 
 ## Commands
 
-- `web search "query" [-n 10]`: Google results (title, URL, snippet). Google operators work
-  (`site:`, `-site:`, quotes, `filetype:pdf`).
+- `web search 'QUERY' [-n 10]`: Google results (title, URL, snippet). **The query is one
+  argument:** put all of it in single quotes, and any phrase inside it in double quotes:
+  `web search 'vodvod.top -site:vodvod.top "not working"' -n 20`. Google operators work
+  (`site:`, `-site:`, `OR`, quotes, `filetype:pdf`).
 - `web fetch URL`: the page's own text. HTML becomes markdown and PDFs get `--- Page N ---`
   markers. Sites the user listed in their config get their browser session (logged-in pages);
   every other site gets an anonymous request. The `Cookies:` line says which.
