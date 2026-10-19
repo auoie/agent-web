@@ -117,7 +117,13 @@ def test_classify_consent_and_js_wall() -> None:
 
 
 def test_classify_legit_empty_results() -> None:
-    html = "<p>Your search did not match any documents.</p>"
+    # Real empty pages also carry the hidden enable-JavaScript fallback; it once made a
+    # `site:` search with no matches look like a JavaScript wall.
+    html = (
+        '<noscript><meta content="0;url=/httpservice/retry/enablejs?sei=x" http-equiv="refresh">'
+        "<div>Please click here if you are not redirected</div></noscript>"
+        "<p>Your search - site:example.com zzz - did not match any documents.</p>"
+    )
     assert classify_response(response(html), html, []) is None
 
 

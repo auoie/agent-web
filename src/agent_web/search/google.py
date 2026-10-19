@@ -196,6 +196,10 @@ def classify_response(
     lowered = html_text.lower()
     if "unusual traffic" in lowered or "captcha-form" in lowered:
         return Captcha(SERVICE)
+    # Every results page, including a genuinely empty one, carries a hidden "enable JavaScript"
+    # fallback, so an empty page has to be recognized before that check. Searches use hl=en.
+    if "did not match any documents" in lowered:
+        return None
     if "enablejs" in lowered or "please click here if you are not redirected" in lowered:
         return JavaScriptWall(SERVICE)
     return None

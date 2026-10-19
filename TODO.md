@@ -46,5 +46,10 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
 - **Cloudflare-protected sites** (e.g. Stack Overflow) block anonymous requests from the user's IP
   whatever browser fingerprint curl_cffi uses. Sending cookies (`cookie_domains`) gets through.
   For Stack Overflow, the Stack Exchange API also works anonymously.
+- **Google's JavaScript-wall detection is a heuristic.** Every results page carries a hidden
+  "enable JavaScript" fallback, so a page with no parsed results is called a JavaScript wall
+  unless it says "did not match any documents" (searches use `hl=en`). A `site:` search with no
+  matches was once misreported that way, and the agent concluded search was blocked. Another
+  zero-result wording, or a layout change that breaks the parser, would show up the same way.
 - **Not used on purpose:** Cloudflare's "Markdown for Agents" (`Accept: text/markdown`) would swap
   agent-web's converter for Cloudflare's, whose table handling is unknown.
