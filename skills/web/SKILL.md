@@ -47,6 +47,11 @@ web fetch https://docs.python.org/3/library/argparse.html --find 'add_subparsers
 web fetch https://docs.python.org/3/library/argparse.html --offset 41250
 web fetch https://arxiv.org/pdf/1706.03762 --find 'BLEU'
 
+# Some sites get a cleaner format: Reddit threads as a numbered comment tree, GitHub file
+# links as the raw file
+web fetch https://www.reddit.com/r/ClaudeCode/comments/1x9ef9c/
+web fetch https://github.com/psf/requests/blob/main/src/requests/api.py
+
 # When a Note asks for it
 web fetch https://example.com/page --whole-page   # text outside <main> was left out
 web fetch https://example.com/page --refresh      # cached copy is out of date
@@ -54,6 +59,23 @@ web fetch https://example.com/page --refresh      # cached copy is out of date
 
 A typical research loop: search, fetch the most promising results, `--find` the part that answers
 the question, read around it with `--offset`, then quote the exact text with its URL.
+
+## Common mistakes
+
+- **Splitting the search query.** `web search vodvod.top -site:vodvod.top` fails with
+  "unrecognized arguments": the query must be one argument, in single quotes.
+- **Unquoted URLs.** `&` cuts the command short and runs it in the background, and in zsh `?`
+  is a wildcard ("no matches found"). Put URLs with `?`, `&`, `*` or spaces in single quotes.
+- **Paging through a long page from the top.** Use `--find` with a distinctive word first. It's
+  plain text, not a regex, and case-insensitive.
+- **Raising `--max-chars` a lot.** Agents cut long command output (Claude Code at 30,000
+  characters), so the end gets lost. Keep the default and continue with `--offset`.
+- **Firing off many searches at once.** Searches are spaced 2 seconds apart to protect the user's
+  Google account, so they queue up. Run a few, read the results, then refine.
+- **Retrying a blocked page.** If a Note says the page is a bot check or an error page, retrying
+  rarely helps. Say the page couldn't be read, or suggest the cookie setting the Note mentions.
+- **Treating a non-zero exit code as "no output".** On HTTP errors (exit 3) and block pages
+  (exit 4), the page that was returned is still printed. Read the Notes to see what it is.
 
 ## Rules
 
