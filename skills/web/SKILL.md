@@ -13,7 +13,7 @@ lossy conversion.
 
 - `web search 'QUERY' [-n 10]`: Google results (title, URL, snippet). **The query is one
   argument:** put all of it in single quotes, and any phrase inside it in double quotes:
-  `web search 'vodvod.top -site:vodvod.top "not working"' -n 20`. Google operators work
+  `web search 'sqlite -site:sqlite.org "write-ahead log"' -n 20`. Google operators work
   (`site:`, `-site:`, `OR`, quotes, `filetype:pdf`).
 - `web fetch URL`: the page's own text. HTML becomes markdown and PDFs get `--- Page N ---`
   markers. Sites the user listed in their config get their browser session (logged-in pages);
@@ -35,7 +35,7 @@ lossy conversion.
 # Search: the whole query in single quotes, phrases in double quotes inside
 web search 'pandoc lua filter tables'
 web search 'site:docs.python.org argparse subparsers'
-web search 'vodvod.top -site:vodvod.top "not working"' -n 20
+web search 'sqlite -site:sqlite.org "write-ahead log"' -n 20
 web search 'attention is all you need filetype:pdf'
 
 # Read a page. Quote URLs that contain ? or & (the shell treats & as "run in background")
@@ -62,7 +62,7 @@ the question, read around it with `--offset`, then quote the exact text with its
 
 ## Common mistakes
 
-- **Splitting the search query.** `web search vodvod.top -site:vodvod.top` fails with
+- **Splitting the search query.** `web search sqlite -site:sqlite.org` fails with
   "unrecognized arguments": the query must be one argument, in single quotes.
 - **Unquoted URLs.** `&` cuts the command short and runs it in the background, and in zsh `?`
   is a wildcard ("no matches found"). Put URLs with `?`, `&`, `*` or spaces in single quotes.

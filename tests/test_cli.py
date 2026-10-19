@@ -133,9 +133,9 @@ def test_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_split_search_query_explains_quoting() -> None:
-    code, _, err = run_cli("search", "vodvod.top", "-site:vodvod.top", "-n", "20")
+    code, _, err = run_cli("search", "sqlite", "-site:sqlite.org", "-n", "20")
     assert code == 1
-    assert "unrecognized arguments: -site:vodvod.top" in err
+    assert "unrecognized arguments: -site:sqlite.org" in err
     assert "Put all of it in single quotes" in err
     _, _, fetch_err = run_cli("fetch", "https://a.example/", "extra")
     assert "single quotes" not in fetch_err
