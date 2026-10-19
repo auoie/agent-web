@@ -6,6 +6,10 @@ Tokens are counted with tiktoken's o200k_base as a proxy (Claude's tokenizer isn
 absolute numbers differ, ratios between tools hold. Each page has a phrase from its real content;
 an output without it is marked as having lost the content.
 
+Optional: set DONSETCH to a DonSeTch binary to add its `fetch` and `fetch --focus` columns. It
+downloads pages itself (not the shared bytes), with its update check off and its cache in a
+temporary directory.
+
 Optional: set TURNDOWN_DIR to a directory with node_modules/turndown to include what Claude
 Code's WebFetch hands its Haiku summarizer (Turndown with script/style/noscript/iframe removed,
 cut to 100,000 chars). Claude itself then only sees Haiku's short answer.
@@ -17,6 +21,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -125,6 +130,27 @@ def turndown_md(html: str) -> str | None:
     return result.stdout if result.returncode == 0 else None
 
 
+def donsetch(url: str, focus: str | None = None) -> str | None:
+    binary = os.environ.get("DONSETCH")
+    if not binary:
+        return None
+    args = [binary, "fetch", url, "--max-chars", "5000000", "--deadline-ms", "60000"]
+    if focus:
+        args += ["--focus", focus]
+    with tempfile.TemporaryDirectory() as cache:
+        env = {
+            **os.environ,
+            "DONSETCH_NO_UPDATE_CHECK": "1",
+            "DONSETCH_CACHE_DIR": cache,
+            "XDG_CACHE_HOME": cache,
+            "XDG_CONFIG_HOME": cache,
+            "XDG_DATA_HOME": cache,
+            "XDG_STATE_HOME": cache,
+        }
+        result = subprocess.run(args, capture_output=True, text=True, env=env, check=False)
+    return result.stdout if result.returncode == 0 else ""
+
+
 def main() -> None:
     pandoc = find_pandoc()
     if not isinstance(pandoc, Pandoc):
@@ -153,9 +179,13 @@ def main() -> None:
         passages, _ = find_passages(full, page.find, 25_000)
         found = "\n\n".join(p.text for p in passages)
         row["agent-web --find"] = (tokens(found), True)
+        if (full_ds := donsetch(page.url)) is not None:
+            row["donsetch"] = (tokens(full_ds), page.phrase.lower() in full_ds.lower())
+            focused = donsetch(page.url, page.find) or ""
+            row["donsetch --focus"] = (tokens(focused), True)
         rows.append(row)
 
-    names = [name for name, _ in tools] + ["agent-web --find"]
+    names = [name for name, _ in tools] + ["agent-web --find", "donsetch", "donsetch --focus"]
     names = [n for n in names if any(n in r for r in rows)]
     width = max(len(str(r["page"])) for r in rows) + 2
     print("tokens (o200k proxy); ✗ = the page's real content is missing from the output\n")

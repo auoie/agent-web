@@ -38,22 +38,31 @@ Counts use tiktoken's o200k_base as a proxy, since Claude's tokenizer isn't publ
 numbers differ, ratios hold. ✗ means the page's real content (a sentence, or a number from the
 table) is missing.
 
-| Page | `curl` | `curl` + html2text | `curl` + pandoc | WebFetch → Haiku | trafilatura | **agent-web** | agent-web `--find` |
-| :- | -: | -: | -: | -: | -: | -: | -: |
-| Wikipedia table | 124,154 | 23,462 | 64,828 | 23,537 | 1,647 ✗ | **17,809** | 7,566 |
-| News article | 43,875 | 7,138 | 8,916 | 6,864 | 564 ✗ | **5,249** | 230 |
-| Blog post | 6,410 | 2,277 | 2,943 | 2,228 | 1,727 | **2,213** | 232 |
-| Link post | 5,361 | 1,621 | 2,583 | 1,313 | 550 | **1,562** | 355 |
-| Python docs | 95,016 | 22,305 | 81,951 | 24,979 | 20,297 | **25,529** | 358 |
-| GitHub README | 129,674 | 6,736 | 70,188 | 6,644 | 1,307 | **5,866** | 1,346 |
-| Tiny page | 310 | 43 | 39 | 43 | 33 | **38** | 8 |
-| **Total** | 404,800 | 63,582 | 231,448 | 65,608 | 26,125 | **58,266** | 10,095 |
+| Page | `curl` | `curl` + html2text | `curl` + pandoc | WebFetch → Haiku | trafilatura | DonSeTch | DonSeTch `--focus` | **agent-web** | agent-web `--find` |
+| :- | -: | -: | -: | -: | -: | -: | -: | -: | -: |
+| Wikipedia table | 124,154 | 23,462 | 64,828 | 23,537 | 1,647 ✗ | 3,222 | 1,482 | **17,809** | 7,566 |
+| News article | 43,875 | 7,138 | 8,916 | 6,864 | 564 ✗ | 967 | 249 | **5,249** | 230 |
+| Blog post | 6,410 | 2,277 | 2,943 | 2,228 | 1,727 | 1,811 | 466 | **2,213** | 232 |
+| Link post | 5,361 | 1,621 | 2,583 | 1,313 | 550 | 553 | 395 | **1,562** | 355 |
+| Python docs | 95,016 | 22,305 | 81,951 | 24,979 | 20,297 | 18,978 | 2,035 | **25,529** | 358 |
+| GitHub README | 129,674 | 6,736 | 70,188 | 6,644 | 1,307 | 1,443 | 174 | **5,866** | 1,346 |
+| Tiny page | 310 | 43 | 39 | 43 | 33 | 60 | 54 | **38** | 8 |
+| **Total** | 404,800 | 63,582 | 231,448 | 65,608 | 26,125 | 27,034 | 4,855 | **58,266** | 10,095 |
 
 - **Against raw `curl`:** about 86% fewer tokens (7×). Against `curl` + plain pandoc, 75% fewer.
 - **Against a plain converter (html2text):** about the same size (8% fewer). agent-web's edge
   there is fidelity: merged table cells, strikethrough, hidden-text labels and problem notes.
 - **Against article extraction (trafilatura):** trafilatura is cheapest, but it dropped the table's
   numbers on Wikipedia and grabbed sidebar headlines instead of the article on The Register.
+- **Against DonSeTch** (v4.10.1): DonSeTch is about half the size, for three reasons:
+  - It drops link URLs (21% of agent-web's tokens on these pages).
+  - It extracts the article instead of converting the page.
+  - It writes every table as a pipe table.
+
+  The last two cost fidelity. On the Wikipedia table, merged cells shift values into the wrong
+  column (China National Petroleum's revenue reads 25.2 instead of 476), and icon-only cells
+  vanish. In PDFs it lost exponents (`2.3 · 1019`) and split cells. It also drops strikethrough
+  and figures. Its keyless search was blocked from the test machine's IP.
 - **Against WebFetch:** the WebFetch column is what *Haiku* reads. Claude itself gets only Haiku's
   short answer, which is the cheapest for Claude and also the source of the made-up details.
 - **`--find`** reads only matching passages: about 83% fewer tokens than the full page.
