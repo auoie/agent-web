@@ -1,9 +1,8 @@
-"""URL validation, normalization, extraction and domain matching."""
+"""URL validation, normalization and domain matching."""
 
 from __future__ import annotations
 
 import ipaddress
-import re
 import socket
 from urllib.parse import urlsplit, urlunsplit
 
@@ -72,7 +71,7 @@ def domain_matches(host: str, domain: str) -> bool:
 
 
 def normalize(url: str) -> str:
-    """Canonical form used to compare URLs for provenance.
+    """Canonical form used to recognize the same URL twice (e.g. repeated search results).
 
     Lower-cases scheme and host, treats http and https as the same, drops default ports,
     fragments and a trailing slash (except the root path). The query string is kept as-is.
@@ -88,25 +87,3 @@ def normalize(url: str) -> str:
     if len(path) > 1 and path.endswith("/"):
         path = path.rstrip("/") or "/"
     return urlunsplit(("https", netloc, path, parts.query, ""))
-
-
-_URL_RE = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
-_TRAILING = ".,;:!?'\""
-_PAIRS = {")": "(", "]": "[", "}": "{"}
-
-
-def extract_urls(text: str) -> list[str]:
-    """Find http(s) URLs in free text, trimming trailing punctuation and unbalanced brackets."""
-    found: list[str] = []
-    for match in _URL_RE.finditer(text):
-        url = match.group(0)
-        while url:
-            last = url[-1]
-            unbalanced = last in _PAIRS and url.count(last) > url.count(_PAIRS[last])
-            if last not in _TRAILING and not unbalanced:
-                break
-            url = url[:-1]
-        validated = validate_url(url)
-        if isinstance(validated, str):
-            found.append(validated)
-    return found

@@ -32,10 +32,6 @@ min_interval_seconds = 2.0
 # Domains that receive your browser cookies when fetched (subdomains included).
 # Every other site gets an anonymous request.
 cookie_domains = []
-# Domains whose URLs agents may fetch without asking, even links found inside pages (Claude Code
-# plugin). Only list sites where an attacker can't see the requests (no personal sites, URL
-# shorteners, redirect services or paste sites).
-trusted_domains = []
 timeout_seconds = 30
 max_download_mb = 25
 # Allow fetching localhost / private network addresses (off: protects local services)
@@ -61,11 +57,6 @@ def _default_cache_dir() -> Path:
     return Path(base) / "agent-web"
 
 
-def default_state_dir() -> Path:
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    return Path(base) / "agent-web"
-
-
 def config_path() -> Path:
     explicit = os.environ.get("AGENT_WEB_CONFIG")
     if explicit:
@@ -80,7 +71,6 @@ class Config:
     cookie_file: Path | None = None
     search_min_interval: float = 2.0
     cookie_domains: tuple[str, ...] = ()
-    trusted_domains: tuple[str, ...] = ()
     timeout: float = 30.0
     max_download_bytes: int = 25 * 1024 * 1024
     allow_private_networks: bool = False
@@ -95,13 +85,7 @@ _SCHEMA: dict[str, frozenset[str]] = {
     "cookies": frozenset({"browser", "cookie_file"}),
     "search": frozenset({"min_interval_seconds"}),
     "fetch": frozenset(
-        {
-            "cookie_domains",
-            "trusted_domains",
-            "timeout_seconds",
-            "max_download_mb",
-            "allow_private_networks",
-        }
+        {"cookie_domains", "timeout_seconds", "max_download_mb", "allow_private_networks"}
     ),
     "output": frozenset({"max_chars"}),
     "cache": frozenset({"dir", "ttl_seconds", "max_mb"}),
@@ -188,8 +172,6 @@ def _parse(data: Mapping[str, Any]) -> Config:
     fetch = _table(data, "fetch")
     if (cookie_domains := _domains(fetch, "cookie_domains")) is not None:
         config = replace(config, cookie_domains=cookie_domains)
-    if (trusted_domains := _domains(fetch, "trusted_domains")) is not None:
-        config = replace(config, trusted_domains=trusted_domains)
     if (timeout := _number(fetch, "timeout_seconds", "fetch", 1)) is not None:
         config = replace(config, timeout=timeout)
     if (max_mb := _number(fetch, "max_download_mb", "fetch", 1)) is not None:

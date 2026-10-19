@@ -21,16 +21,14 @@ requires_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pan
 
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """No test reads the user's config, cache or state, or the plugin's data dir."""
+    """No test reads the user's config or cache."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     for name in (
         "AGENT_WEB_CONFIG",
         "AGENT_WEB_CACHE_DIR",
         "AGENT_WEB_ALLOW_PRIVATE_NETWORKS",
         "AGENT_WEB_PANDOC",
-        "CLAUDE_PLUGIN_DATA",
     ):
         monkeypatch.delenv(name, raising=False)
 

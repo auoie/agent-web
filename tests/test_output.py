@@ -26,7 +26,6 @@ from agent_web.output import (
     search_json,
 )
 from agent_web.search.google import SearchResult, SearchResults
-from agent_web.search_text import urls_from_search_output
 
 URL = "https://example.com/a?x=1&y=2"
 
@@ -186,7 +185,7 @@ def test_fetch_json() -> None:
     assert found["passages"][0]["text"] == "b"
 
 
-def test_search_rendering_round_trips_through_the_hook_parser() -> None:
+def test_search_rendering() -> None:
     results = SearchResults(
         "q",
         (
@@ -198,11 +197,7 @@ def test_search_rendering_round_trips_through_the_hook_parser() -> None:
     )
     out = render_search(results, fence=fixed_fence)
     assert "1. Multi line title\n   https://a.example/x?y=1\n   snippet with lines" in out
-    assert urls_from_search_output(out) == [
-        "https://a.example/x?y=1",
-        "https://b.example/",
-        "https://c.example/",
-    ]
+    assert "3. 3. Tricky\n   https://c.example/\n   1. Fake https://evil.example/" in out
     assert out.splitlines()[-1].startswith("Note: stopped early: Google answered with a captcha")
     data = json.loads(search_json(results))
     assert data["results"][1] == {"title": "Second", "url": "https://b.example/", "snippet": ""}

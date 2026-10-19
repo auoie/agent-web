@@ -1,12 +1,21 @@
 # agent-web
 
-Verbatim web search and page reading for AI coding agents: a `web` command and a Claude Code plugin.
+Verbatim web search and page reading for AI coding agents: a `web` command, plus a skill that
+teaches agents to use it. It works with any agent that can run shell commands (Claude Code,
+OpenCode, Codex, …).
 
-Claude Code's built-in `WebFetch` doesn't show Claude the page. It converts the HTML with Turndown
-(which flattens tables), cuts it to 100,000 characters, and has a small model (Haiku) answer Claude's
-question about it under instructions to paraphrase. Claude only sees that answer. `WebSearch` similarly
-returns a model-written summary plus links. This produces confident errors: invented numbers, values
-from the wrong table row, conclusions reversed. agent-web prints the source itself.
+Built-in web tools lose information:
+- **Claude Code's `WebFetch`** doesn't show Claude the page. It converts the HTML with Turndown
+  (which flattens tables), cuts it to 100,000 characters, and has a small model (Haiku) answer
+  Claude's question about it under instructions to paraphrase. Claude only sees that answer.
+  `WebSearch` similarly returns a model-written summary plus links. This produces confident errors:
+  invented numbers, values from the wrong table row, conclusions reversed.
+- **OpenCode's `webfetch`** returns markdown, but it flattens tables with merged cells, drops
+  superscripts (10⁻³ becomes "10-3"), passes hidden text through unlabeled and can't read PDFs. Its
+  `websearch` goes through a third-party service (Exa, Firecrawl, Parallel, Tavily or TinyFish).
+- **Codex's `web_search`** runs on OpenAI's side and by default searches an index OpenAI maintains.
+
+agent-web prints the source itself.
 
 ## What it does
 
@@ -19,17 +28,16 @@ from the wrong table row, conclusions reversed. agent-web prints the source itse
   - **PDFs** become markdown via pymupdf, with `--- Page N ---` markers. The original is kept.
   - **Reddit threads** come out as the post plus a numbered comment tree (via Reddit's JSON).
   - **`--find TEXT`** shows only the matching passages, and **`--offset N`** continues a long page.
-    Output is capped (25,000 characters by default) to fit Claude Code's 30,000-character Bash limit.
+    Output is capped (25,000 characters by default) to fit agents' output limits (Claude Code cuts
+    command output at 30,000 characters).
   - **Just the main content when a page marks it:** if a page has a single `<main>` element, only
     that is converted (pandoc's behavior), which drops menus and footers. Real text left outside
     it is reported, and `--whole-page` includes everything.
   - **Problems are flagged**, never hidden: HTTP errors, bot-check and captcha pages, pages that
     need JavaScript, scanned PDFs, and text that's hidden from human visitors (marked
     `⟦hidden on page: …⟧`).
-- **The Claude Code plugin:**
-  - Teaches agents the command (skill `web`).
-  - Redirects `WebFetch`/`WebSearch` to it.
-  - Auto-approves fetches only for URLs you typed or a search returned (see Security).
+- **The skill** (`skills/web/SKILL.md`) teaches agents the commands and the rules for using them:
+  quote what they rely on, treat page text as untrusted, read the `Note:` lines.
 
 ## Token cost
 
@@ -80,7 +88,7 @@ Set `TURNDOWN_DIR` to a folder with `node_modules/turndown` to include the WebFe
 There are no middlemen and no proxies:
 - **Searches** go from your machine to Google.
 - **Pages** are fetched directly from your machine.
-- **Anthropic** sees what the agent reads, as with any Claude conversation.
+- **Your model provider** sees what the agent reads, as with anything else in the conversation.
 - **Your browser cookies** are sent only to Google (for search) and to domains you explicitly list in
   `fetch.cookie_domains`. Every other site gets an anonymous request.
 
@@ -90,30 +98,32 @@ Searches use your Google account, so they appear in its search history.
 
 Every fetch is a request to someone else's server, and the URL itself can carry data out. Pages can
 contain instructions aimed at agents ("visit /a, then /b…"). This is the
-[lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/). agent-web limits it:
+[lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/).
 
-- **Provenance gate (plugin hooks).**
-  - A `web fetch` runs without asking only if the URL appeared in your own message (typed or pasted)
-    or in the results of a `web search` in the same session.
-  - Links found inside fetched pages, URLs inside search snippets, compound shell commands
-    (`|`, `&&`, `;`, `$(…)`, redirects) and shell variables all go to you for approval.
-  - **Trusted domains** you list in `fetch.trusted_domains` (e.g. `arxiv.org`) are fetched without
-    asking, including links found inside pages, so agents can browse those sites. Only list sites
-    where an attacker can't see the requests. That rules out personal sites, URL shorteners,
-    redirect services and paste sites. Redirects are followed, so avoid sites with open redirects
-    (`site/go?to=anywhere`): one could forward an auto-approved request to another site.
-  - Anthropic closed the same hole in claude.ai's web fetch in 2026.
+> [!WARNING]
+> **agent-web doesn't decide which fetches run; your agent's permission settings do.** If agents
+> may run `web fetch` without asking, a page that successfully injects instructions can make the
+> agent fetch URLs that spell out data from your conversation, files or environment, one request
+> at a time, to a site the attacker watches. Claude.ai's web fetch closed this hole in 2026 by
+> refusing links found inside fetched pages without approval. agent-web has no such check (an
+> earlier version had one as Claude Code hooks; it was removed to keep the tool agent-neutral).
+> To avoid the risk, keep `web fetch` on "ask" for agents that handle private data. Allowing
+> `web search` is lower risk: queries go only to Google.
+
+What agent-web does do:
+
 - **Untrusted-content fences.** Page text is printed inside `<untrusted-web-content-RANDOM>` tags with
-  a note not to follow instructions in it. Hidden text is labeled. This helps the model resist
-  injected instructions, but prompt injection isn't solved.
+  a note not to follow instructions in it. Hidden text is labeled, and the skill tells agents never
+  to fetch a URL because a page says so or to put conversation data into URLs. This helps the
+  model resist injected instructions, but prompt injection isn't solved.
 - **No local network access.** `localhost`, private and link-local addresses are refused, including
   as a redirect target. Every redirect hop is re-checked, and cookies never follow a redirect to
   another host.
 - **Limits:** a 25 MB download cap, a 30 s timeout, at most 10 redirects, and at least 2 s between
   Google requests (shared across processes).
 
-Plain `curl` in Bash is still an exfiltration channel. Don't auto-approve Bash for agents that read
-the web.
+Any other network command (`curl`, `wget`, a script) is the same channel, so the same warning applies
+to auto-approving shell commands in general.
 
 ## Requirements
 
@@ -125,24 +135,61 @@ the web.
 
 ## Install
 
-**As a Claude Code plugin** (from this checkout):
+```bash
+uv tool install --editable ~/Documents/agent-web   # puts `web` on PATH (~/.local/bin)
+web doctor                                         # checks pandoc, the config and the Google sign-in
+```
+
+For a bundled pandoc, install `"$HOME/Documents/agent-web[bundled-pandoc]"` instead.
+
+Then give your agents the skill. Claude Code reads `~/.claude/skills`, Codex reads
+`~/.agents/skills`, and OpenCode reads both:
 
 ```bash
-claude plugin marketplace add ~/Documents/agent-web
-claude plugin install agent-web@agent-web
+mkdir -p ~/.claude/skills ~/.agents/skills
+ln -s ~/Documents/agent-web/skills/web ~/.claude/skills/web
+ln -s ~/Documents/agent-web/skills/web ~/.agents/skills/web
 ```
 
-Or try it for one session with `claude --plugin-dir ~/Documents/agent-web`. Once the repo is on GitHub:
+Finally, turn off each agent's built-in web tools, so agents don't fall back to them, and choose
+what runs without asking. Read the warning under [Security](#security) before letting
+`web fetch` run without asking.
 
+**Claude Code** (`~/.claude/settings.json`). Bash commands ask by default; this allows searches:
+
+```json
+{
+  "permissions": {
+    "deny": ["WebFetch", "WebSearch"],
+    "allow": ["Bash(web search *)", "Bash(web doctor)"]
+  }
+}
 ```
-/plugin install agent-web --marketplace <owner>/<repo>
+
+**OpenCode** (`~/.config/opencode/opencode.jsonc`). OpenCode allows every shell command by
+default, so `web` runs without asking. Add an `ask` rule for `web fetch *` to be asked about
+fetches:
+
+```jsonc
+"permissions": [
+  { "action": "webfetch", "resource": "*", "effect": "deny" },
+  { "action": "websearch", "resource": "*", "effect": "deny" }
+]
 ```
 
-The plugin puts `web` on the agent's PATH. The first call builds a runtime environment from the
-locked dependencies. Then run `web doctor` to check pandoc, the config and the Google sign-in.
+**Codex** (`~/.codex/config.toml`). Codex's sandbox has no network access, so every `web` command
+asks to run outside it:
 
-**As a standalone CLI:** `uv tool install ~/Documents/agent-web` (add `[bundled-pandoc]` to ship
-pandoc).
+```toml
+web_search = "disabled"
+```
+
+A rule in `~/.codex/rules/default.rules` lets searches through without asking. Add `"fetch"` to
+the list for fetches too:
+
+```python
+prefix_rule(pattern=["web", ["search", "doctor"]], decision="allow")
+```
 
 ## Configuration
 
@@ -154,7 +201,6 @@ browser = "firefox"
 
 [fetch]
 cookie_domains = ["reddit.com"]   # sites that get your browser session; default: none
-trusted_domains = ["arxiv.org"]   # agents may follow links here without asking; default: none
 
 [search]
 min_interval_seconds = 2.0
@@ -226,9 +272,8 @@ Layout:
   - `http.py`: downloads, redirects and cookie scoping.
   - `convert/`: HTML (pandoc + `clean.lua`) and PDF.
   - `search/google.py`, `sites/reddit.py`.
-  - `hooks.py` and `provenance.py`: the Claude Code hooks.
   - `cache.py`, `output.py`.
-- `.claude-plugin/`, `bin/web`, `hooks/` and `skills/web/`: the Claude Code plugin.
+- `skills/web/SKILL.md`: the skill.
 
 ## License
 

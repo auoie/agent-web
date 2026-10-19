@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from agent_web.failures import InvalidUrl, PrivateAddress
-from agent_web.urls import check_public, domain_matches, extract_urls, normalize, validate_url
+from agent_web.urls import check_public, domain_matches, normalize, validate_url
 
 
 @pytest.mark.parametrize(
@@ -60,24 +60,6 @@ def test_normalize_treats_equivalent_urls_as_equal(a: str, b: str) -> None:
 )
 def test_normalize_keeps_meaningful_differences(a: str, b: str) -> None:
     assert normalize(a) != normalize(b)
-
-
-def test_extract_urls_trims_punctuation_and_brackets() -> None:
-    text = (
-        "See https://example.com/page. Also (https://en.wikipedia.org/wiki/Foo_(bar)) and "
-        "[docs](https://docs.example.com/x), plus 'https://q.io/?a=1&b=2'! "
-        "and ftp://nope.com"
-    )
-    assert extract_urls(text) == [
-        "https://example.com/page",
-        "https://en.wikipedia.org/wiki/Foo_(bar)",
-        "https://docs.example.com/x",
-        "https://q.io/?a=1&b=2",
-    ]
-
-
-def test_extract_urls_ignores_invalid() -> None:
-    assert extract_urls("https:// and http://user:pw@host.com/") == []
 
 
 @pytest.mark.parametrize(

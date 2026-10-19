@@ -1,4 +1,4 @@
-"""Argument definitions for `web`, kept free of heavy imports so the hooks can reuse them."""
+"""Argument definitions for `web`."""
 
 from __future__ import annotations
 

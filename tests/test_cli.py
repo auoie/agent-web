@@ -120,7 +120,6 @@ def test_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
     code, out, _ = run_cli("doctor")
     assert code == 0
     assert "google:   signed in" in out
-    assert "trusted:  fetched without asking: (none" in out
     assert "pandoc:   /usr/bin/pandoc (3.9)" in out
     state["jar"] = "anon"
     code, out, _ = run_cli("doctor")

@@ -34,7 +34,6 @@ def test_full_config(tmp_path: Path) -> None:
         min_interval_seconds = 5
         [fetch]
         cookie_domains = ["Reddit.com", ".news.example.org", "reddit.com"]
-        trusted_domains = ["arXiv.org", "docs.python.org"]
         timeout_seconds = 12.5
         max_download_mb = 3
         allow_private_networks = true
@@ -55,7 +54,6 @@ def test_full_config(tmp_path: Path) -> None:
     assert config.cookie_file == Path("~/cookies.sqlite").expanduser()
     assert config.search_min_interval == 5
     assert config.cookie_domains == ("news.example.org", "reddit.com")
-    assert config.trusted_domains == ("arxiv.org", "docs.python.org")
     assert config.timeout == 12.5
     assert config.max_download_bytes == 3 * 1024 * 1024
     assert config.allow_private_networks
@@ -77,11 +75,6 @@ def test_full_config(tmp_path: Path) -> None:
         ({"fetch": {"cookie_domains": "reddit.com"}}, "must be a list"),
         ({"fetch": {"cookie_domains": [1]}}, "must be a list of strings"),
         ({"fetch": {"cookie_domains": ["https://reddit.com"]}}, "not a bare domain"),
-        (
-            {"fetch": {"trusted_domains": ["arxiv.org/abs"]}},
-            "fetch.trusted_domains: 'arxiv.org/abs'",
-        ),
-        ({"fetch": {"trusted_domains": "arxiv.org"}}, "fetch.trusted_domains must be a list"),
         ({"fetch": {"timeout_seconds": "5"}}, "must be a number"),
         ({"fetch": {"timeout_seconds": True}}, "must be a number"),
         ({"fetch": {"timeout_seconds": 0}}, "must be >= 1"),
