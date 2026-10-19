@@ -19,6 +19,11 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
   fallback).
 - **More site rules** like the Reddit one, e.g. YouTube transcripts or Hacker News threads
   (Defuddle has extractors for these). Also from Defuddle: strip line numbers from code blocks.
+- **Optional search APIs:** e.g. the Brave Search API (the backend behind Claude Code's
+  WebSearch) or Firecrawl's search, configured with an API key, as an alternative to Google
+  cookies or a fallback when Google shows a captcha or the browser isn't signed in. Queries would
+  then go to that provider, and results should stay in the same title/URL/snippet format.
+  Fetching would stay local.
 - **Pages that need JavaScript** are only flagged. The skill could point the agent to a browser
   tool as the next step.
 

@@ -8,9 +8,14 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
 
 1. **Accuracy first.** The agent should read the source as it is. Token savings that lose
    information (dropping link URLs, navigation or footers, article extraction) were declined.
-2. **No middlemen.** No proxy services, paid search APIs, hosted converters or crawlers (Firecrawl,
-   Jina Reader, Brave/Exa/Tavily/SerpAPI). Searching engines and fetching pages directly from the
-   user's machine is fine. The model provider sees what the agent reads, as with anything else.
+2. **No middlemen without a reason.** Nothing sits between the agent and the source unless it
+   earns its place. Today search goes straight to Google and pages are fetched directly from the
+   user's machine, so no proxy, API or hosted converter is involved. Services aren't ruled out:
+   an optional search API (Brave Search API, Firecrawl) could be added later, e.g. as a fallback
+   when Google's cookies don't work (see TODO.md). A hosted page fetcher or converter would
+   replace agent-web's own conversion, so it would have to match its fidelity (merged-cell tables,
+   superscripts, labeled hidden text) to be worth it. The model provider sees what the agent reads,
+   as with anything else.
 3. **Simple.** A command and a skill. Rules are added only when the generic path gives wrong
    output.
 
@@ -33,6 +38,9 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
   the config file from agent edits (too paranoid).
 
 ## Search: Google with the user's browser cookies
+
+Chosen because it is direct and was the only free approach that worked from the user's IP. Paid
+search APIs weren't needed for that; they remain an option for later (see TODO.md).
 
 - Every keyless approach was blocked or captcha'd from the user's IP: ddgs (DuckDuckGo and
   others), DonSeTch's search, Google's no-JavaScript/Nokia lane (what SearXNG uses), plain Google.
