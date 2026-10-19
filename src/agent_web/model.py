@@ -74,6 +74,16 @@ class LikelyNeedsJavaScript:
 
 
 @dataclass(frozen=True)
+class NearlyEmpty:
+    text_chars: int
+
+
+@dataclass(frozen=True)
+class OutsideMain:
+    text_chars: int
+
+
+@dataclass(frozen=True)
 class HiddenText:
     count: int
 
@@ -102,6 +112,8 @@ Issue = (
     HttpErrorStatus
     | BotCheck
     | LikelyNeedsJavaScript
+    | NearlyEmpty
+    | OutsideMain
     | HiddenText
     | ScannedPdf
     | PdfLayoutWarning

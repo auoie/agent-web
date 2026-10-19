@@ -34,6 +34,7 @@ from agent_web.provenance import Store
             "web fetch 'https://x.io/p' --find 'BLEU; EN-DE' --max-chars 9000",
             WebFetch("https://x.io/p"),
         ),
+        ("web fetch https://x.io --whole-page --refresh", WebFetch("https://x.io")),
         ("web doctor", WebLocal()),
         ("web --help", WebLocal()),
         ("web fetch --help", WebLocal()),

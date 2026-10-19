@@ -20,6 +20,9 @@ from the wrong table row, conclusions reversed. agent-web prints the source itse
   - **Reddit threads** come out as the post plus a numbered comment tree (via Reddit's JSON).
   - **`--find TEXT`** shows only the matching passages, and **`--offset N`** continues a long page.
     Output is capped (25,000 characters by default) to fit Claude Code's 30,000-character Bash limit.
+  - **Just the main content when a page marks it:** if a page has a single `<main>` element, only
+    that is converted (pandoc's behavior), which drops menus and footers. Real text left outside
+    it is reported, and `--whole-page` includes everything.
   - **Problems are flagged**, never hidden: HTTP errors, bot-check and captcha pages, pages that
     need JavaScript, scanned PDFs, and text that's hidden from human visitors (marked
     `⟦hidden on page: …⟧`).

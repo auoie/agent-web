@@ -32,6 +32,8 @@ from agent_web.model import (
     HttpErrorStatus,
     Issue,
     LikelyNeedsJavaScript,
+    NearlyEmpty,
+    OutsideMain,
     PdfLayoutWarning,
     ScannedPdf,
 )
@@ -63,6 +65,8 @@ ISSUES: list[tuple[Issue, str]] = [
     (HttpErrorStatus(404), "HTTP 404"),
     (BotCheck("captcha"), "bot-check"),
     (LikelyNeedsJavaScript(100_000, 10), "JavaScript"),
+    (NearlyEmpty(0), "almost no text"),
+    (OutsideMain(500), "--whole-page"),
     (HiddenText(2), "⟦hidden on page"),
     (ScannedPdf(), "scanned"),
     (PdfLayoutWarning(), "original PDF"),

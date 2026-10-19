@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--max-chars", type=int, default=None, help="characters to print")
     fetch.add_argument("--find", metavar="TEXT", help="print only passages containing TEXT")
     fetch.add_argument("--refresh", action="store_true", help="ignore the cache")
+    fetch.add_argument(
+        "--whole-page",
+        action="store_true",
+        help="convert the entire page, not just its <main> element (when it has exactly one)",
+    )
     fetch.add_argument("--json", action="store_true", help="print JSON instead of text")
 
     commands.add_parser("doctor", help="check pandoc, config and browser cookies")

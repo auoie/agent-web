@@ -19,6 +19,9 @@ and WebSearch are disabled in favor of it, because they return a summary written
   - `--offset N`: continue reading from character N (the output tells you the next offset).
   - `--max-chars N`: how much to print (default 25,000).
   - `--refresh`: ignore the one-hour cache.
+  - `--whole-page`: when a page has a single `<main>` element only that is converted (menus,
+    headers and footers are dropped). If a `Note:` says text outside it was left out and you need
+    it, add this flag.
   - `--json`: machine-readable output.
 - `web doctor`: check that pandoc, the config and the Google sign-in work.
 

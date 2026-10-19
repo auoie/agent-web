@@ -48,6 +48,18 @@ _META_CHARSET = re.compile(
 )
 _HEADER_CHARSET = re.compile(r"charset\s*=\s*[\"']?([A-Za-z0-9_.:-]+)", re.IGNORECASE)
 
+# Elements that belong in <head>. libxml2's parser predates HTML5: when a page omits the optional
+# <body> tag, it puts HTML5 elements it doesn't know (main, section, article, header, nav, figure,
+# time, ...) and everything after them into <head>, where pandoc ignores them.
+_HEAD_TAGS = frozenset({"title", "base", "link", "meta", "style", "script", "template"})
+# When a page has exactly one <main>, pandoc converts only that element. Text outside it in these
+# elements is the boilerplate that behavior is meant to drop; other outside text is reported.
+_BOILERPLATE_TAGS = frozenset({"nav", "header", "footer", "aside", "menu", "form", "button"})
+
+# Hidden fragments shorter than this (counters, icons) can't carry an instruction; they stay in
+# the text unlabeled instead of triggering a note.
+MIN_HIDDEN_CHARS = 12
+
 HIDDEN_LABEL = "hidden on page"
 NOSCRIPT_LABEL = "shown only without JavaScript"
 
@@ -58,6 +70,9 @@ class Prepared:
     title: str
     hidden_count: int
     text_chars: int
+    outside_main_chars: int = 0
+    # Visible text pandoc should keep: the single <main> if the page has one, else everything.
+    expected_chars: int = 0
 
 
 @dataclass(frozen=True)
@@ -67,6 +82,7 @@ class HtmlConversion:
     hidden_count: int
     text_chars: int
     html_chars: int
+    outside_main_chars: int = 0
     fallback_reason: str | None = None
 
 
@@ -132,6 +148,29 @@ def _remove(node: etree._Element) -> None:  # pyright: ignore[reportPrivateUsage
     parent.remove(node)
 
 
+def _rescue_head_content(doc: lxml.html.HtmlElement) -> None:
+    """Move body content that the parser misplaced into <head> back to the start of <body>."""
+    head = doc.find("head")
+    if head is None:
+        return
+    children = list(head)
+    first = next(
+        (
+            i
+            for i, child in enumerate(children)
+            if isinstance(child.tag, str) and child.tag not in _HEAD_TAGS
+        ),
+        None,
+    )
+    if first is None:
+        return
+    body = doc.find("body")
+    if body is None:
+        body = etree.SubElement(doc, "body")
+    for index, element in enumerate(children[first:]):
+        body.insert(index, element)  # moves the element (and its tail text) out of <head>
+
+
 def _is_hidden(element: lxml.html.HtmlElement) -> bool:
     if element.get("hidden") is not None:
         return True
@@ -152,17 +191,35 @@ def _wrap_text(element: lxml.html.HtmlElement, label: str) -> None:
         element.text += "⟧"
 
 
+def _chars_outside(element: lxml.html.HtmlElement, skip: frozenset[lxml.html.HtmlElement]) -> int:
+    """Visible text length under `element`, leaving out the `skip` subtrees and boilerplate tags."""
+    total = len("".join((element.text or "").split()))
+    for child in element:
+        if (
+            isinstance(child, lxml.html.HtmlElement)
+            and child not in skip
+            and child.tag not in _BOILERPLATE_TAGS
+        ):
+            total += _chars_outside(child, skip)
+        total += len("".join((child.tail or "").split()))
+    return total
+
+
 def _visible_text_chars(element: lxml.html.HtmlElement) -> int:
     return len(" ".join(element.text_content().split()))
 
 
-def prepare(html_text: str, base_url: str) -> Prepared:
-    """Clean the HTML for pandoc and collect facts used by problem detection."""
+def prepare(html_text: str, base_url: str, whole_page: bool = False) -> Prepared:
+    """Clean the HTML for pandoc and collect facts used by problem detection.
+
+    `whole_page` turns <main> into a plain <div> so pandoc converts the entire page.
+    """
     doc = parse_document(_XML_DECL.sub("", html_text, count=1))
     if doc is None:
         return Prepared(html="", title="", hidden_count=0, text_chars=0)
 
     title = " ".join((doc.findtext(".//title") or "").split())
+    _rescue_head_content(doc)
     doc.make_links_absolute(base_url, resolve_base_href=True, handle_failures="discard")
 
     for node in list(doc.iter(*_DROP_TAGS, etree.Comment)):
@@ -177,7 +234,7 @@ def prepare(html_text: str, base_url: str) -> Prepared:
             continue
         if any(ancestor in labeled for ancestor in element.iterancestors()):
             continue
-        if not element.text_content().strip():
+        if len("".join(element.text_content().split())) < MIN_HIDDEN_CHARS:
             continue
         _wrap_text(element, NOSCRIPT_LABEL if is_noscript else HIDDEN_LABEL)
         for attribute in ("style", "hidden"):
@@ -185,11 +242,26 @@ def prepare(html_text: str, base_url: str) -> Prepared:
                 del element.attrib[attribute]
         labeled.add(element)
 
+    mains = [m for m in doc.iter("main") if isinstance(m, lxml.html.HtmlElement)]
+    text_chars = _visible_text_chars(doc)
+    outside_main = 0
+    expected = text_chars
+    if whole_page:
+        for main in mains:
+            main.tag = "div"
+    elif len(mains) == 1:
+        expected = _visible_text_chars(mains[0])
+        body = doc.find("body")
+        if isinstance(body, lxml.html.HtmlElement):
+            outside_main = _chars_outside(body, frozenset(mains))
+
     return Prepared(
         html=lxml.html.tostring(doc, encoding="unicode"),
         title=title,
         hidden_count=len(labeled),
-        text_chars=_visible_text_chars(doc),
+        text_chars=text_chars,
+        outside_main_chars=outside_main,
+        expected_chars=expected,
     )
 
 
@@ -205,9 +277,11 @@ def _plain_text(html: str) -> str:
     return re.sub(r"[ \t]*\n\s*\n\s*", "\n\n", doc.text_content()).strip()
 
 
-def convert_html(data: bytes, content_type: str, base_url: str, pandoc: Pandoc) -> HtmlConversion:
+def convert_html(
+    data: bytes, content_type: str, base_url: str, pandoc: Pandoc, whole_page: bool = False
+) -> HtmlConversion:
     text = decode_html(data, content_type)
-    prepared = prepare(text, base_url)
+    prepared = prepare(text, base_url, whole_page)
     html = prepared.html
     fallback: str | None = None
     if len(html) > MAX_HTML_CHARS:
@@ -217,6 +291,13 @@ def convert_html(data: bytes, content_type: str, base_url: str, pandoc: Pandoc) 
     if isinstance(converted, PandocFailed):
         markdown = _plain_text(html)
         fallback = f"pandoc failed ({converted.reason}); showing plain text without structure"
+    elif prepared.expected_chars >= 200 and len(converted.strip()) < prepared.expected_chars // 2:
+        markdown = _plain_text(html)
+        fallback = (
+            f"the converted page kept only {len(converted.strip()):,} of "
+            f"{prepared.expected_chars:,} characters of visible text; showing plain text without "
+            "structure instead"
+        )
     else:
         markdown = converted
     return HtmlConversion(
@@ -225,5 +306,6 @@ def convert_html(data: bytes, content_type: str, base_url: str, pandoc: Pandoc) 
         hidden_count=prepared.hidden_count,
         text_chars=prepared.text_chars,
         html_chars=len(text),
+        outside_main_chars=prepared.outside_main_chars,
         fallback_reason=fallback,
     )

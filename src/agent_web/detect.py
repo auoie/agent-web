@@ -10,6 +10,8 @@ from agent_web.model import (
     HttpErrorStatus,
     Issue,
     LikelyNeedsJavaScript,
+    NearlyEmpty,
+    OutsideMain,
     PdfLayoutWarning,
     ScannedPdf,
 )
@@ -27,6 +29,8 @@ SHORT_PAGE_CHARS = 3_000
 JS_SHELL_HTML_CHARS = 50_000
 JS_SHELL_TEXT_CHARS = 1_500
 SCANNED_PDF_CHARS_PER_PAGE = 50
+NEARLY_EMPTY_CHARS = 20
+OUTSIDE_MAIN_CHARS = 200
 
 
 def bot_check(title: str, text: str) -> BotCheck | None:
@@ -40,7 +44,14 @@ def bot_check(title: str, text: str) -> BotCheck | None:
 
 
 def html_issues(
-    *, status: int, title: str, markdown: str, text_chars: int, html_chars: int, hidden_count: int
+    *,
+    status: int,
+    title: str,
+    markdown: str,
+    text_chars: int,
+    html_chars: int,
+    hidden_count: int,
+    outside_main_chars: int = 0,
 ) -> list[Issue]:
     issues: list[Issue] = []
     if status >= 400:
@@ -49,6 +60,10 @@ def html_issues(
         issues.append(blocked)
     elif html_chars > JS_SHELL_HTML_CHARS and text_chars < JS_SHELL_TEXT_CHARS:
         issues.append(LikelyNeedsJavaScript(html_chars=html_chars, text_chars=text_chars))
+    elif len(markdown.strip()) < NEARLY_EMPTY_CHARS:
+        issues.append(NearlyEmpty(len(markdown.strip())))
+    if outside_main_chars >= OUTSIDE_MAIN_CHARS:
+        issues.append(OutsideMain(outside_main_chars))
     if hidden_count:
         issues.append(HiddenText(hidden_count))
     return issues

@@ -40,7 +40,9 @@ def _fetch(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) -
     if max_chars < 1 or int(args.offset) < 0:
         print("web: --max-chars must be positive and --offset non-negative", file=err)
         return EXIT_USAGE
-    outcome = fetch(str(args.url), config, refresh=bool(args.refresh))
+    outcome = fetch(
+        str(args.url), config, refresh=bool(args.refresh), whole_page=bool(args.whole_page)
+    )
     if not isinstance(outcome, FetchResult):
         return _fail(outcome, err)
     find = str(args.find) if args.find else None

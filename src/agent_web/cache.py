@@ -31,6 +31,8 @@ from agent_web.model import (
     Issue,
     LikelyNeedsJavaScript,
     Meta,
+    NearlyEmpty,
+    OutsideMain,
     PdfDocument,
     PdfLayoutWarning,
     PlainText,
@@ -38,7 +40,8 @@ from agent_web.model import (
     ScannedPdf,
 )
 
-FORMAT_VERSION = 1
+# Bump whenever conversion output changes, so results from older converters become misses.
+FORMAT_VERSION = 2
 
 
 def url_key(url: str, variant: str = "") -> str:
@@ -105,6 +108,10 @@ def _encode_issue(issue: Issue) -> dict[str, object]:
             return {"type": "bot_check", "evidence": evidence}
         case LikelyNeedsJavaScript(html_chars, text_chars):
             return {"type": "needs_js", "html_chars": html_chars, "text_chars": text_chars}
+        case NearlyEmpty(text_chars):
+            return {"type": "nearly_empty", "text_chars": text_chars}
+        case OutsideMain(text_chars):
+            return {"type": "outside_main", "text_chars": text_chars}
         case HiddenText(count):
             return {"type": "hidden_text", "count": count}
         case ScannedPdf():
@@ -177,6 +184,10 @@ def _decode_issue(data: dict[str, object]) -> Issue:
             return BotCheck(_str(data, "evidence"))
         case "needs_js":
             return LikelyNeedsJavaScript(_int(data, "html_chars"), _int(data, "text_chars"))
+        case "nearly_empty":
+            return NearlyEmpty(_int(data, "text_chars"))
+        case "outside_main":
+            return OutsideMain(_int(data, "text_chars"))
         case "hidden_text":
             return HiddenText(_int(data, "count"))
         case "scanned_pdf":

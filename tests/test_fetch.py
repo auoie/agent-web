@@ -15,6 +15,7 @@ from agent_web.model import (
     FetchResult,
     HtmlPage,
     HttpErrorStatus,
+    OutsideMain,
     PdfDocument,
     PdfLayoutWarning,
     PlainText,
@@ -87,6 +88,21 @@ def test_allowing_cookies_bypasses_the_anonymous_cache_entry(
     assert isinstance(result, FetchResult)
     assert not result.from_cache
     assert len(server.seen["/html"]) == 2
+
+
+def test_whole_page_has_its_own_cache_entry(server: Server, config: Config) -> None:
+    server.routes["/main"] = Route(
+        body=b"<body><main><p>Inside</p></main><p>" + b"Outside text. " * 30 + b"</p></body>",
+        headers={"Content-Type": "text/html"},
+    )
+    narrow = ok(server.url("/main"), config)
+    assert html(narrow).markdown == "Inside"
+    assert any(isinstance(issue, OutsideMain) for issue in narrow.issues)
+    result = fetch(server.url("/main"), config, whole_page=True)
+    assert isinstance(result, FetchResult)
+    assert not result.from_cache
+    assert "Outside text." in html(result).markdown
+    assert not any(isinstance(issue, OutsideMain) for issue in result.issues)
 
 
 def test_http_error_page(server: Server, config: Config) -> None:

@@ -26,6 +26,7 @@ from agent_web.model import (
     HttpErrorStatus,
     Issue,
     Meta,
+    NearlyEmpty,
     PdfDocument,
     PlainText,
     RedditThread,
@@ -83,6 +84,7 @@ def _convert(
     cache: PageCache,
     pandoc: Callable[[], Pandoc | ToolMissing],
     now: float,
+    whole_page: bool = False,
 ) -> tuple[Content, list[Issue]] | ToolMissing:
     meta = _meta(url, response, now)
     match classify(response):
@@ -104,7 +106,9 @@ def _convert(
             found = pandoc()
             if isinstance(found, ToolMissing):
                 return found
-            page = convert_html(response.content, response.content_type, response.url, found)
+            page = convert_html(
+                response.content, response.content_type, response.url, found, whole_page
+            )
             issues = detect.html_issues(
                 status=response.status,
                 title=page.title,
@@ -112,6 +116,7 @@ def _convert(
                 text_chars=page.text_chars,
                 html_chars=page.html_chars,
                 hidden_count=page.hidden_count,
+                outside_main_chars=page.outside_main_chars,
             )
             if page.fallback_reason:
                 issues.append(ConversionFallback(page.fallback_reason))
@@ -157,6 +162,7 @@ def fetch(
     config: Config,
     *,
     refresh: bool = False,
+    whole_page: bool = False,
     cookie_source: CookieSource | None = None,
     pandoc: Callable[[], Pandoc | ToolMissing] | None = None,
     now: Callable[[], float] = time.time,
@@ -165,7 +171,7 @@ def fetch(
     if isinstance(valid, InvalidUrl):
         return valid
     cache = PageCache(config.cache_dir, config.cache_ttl, config.cache_max_bytes)
-    variant = cache_variant(valid, config)
+    variant = cache_variant(valid, config) + (" whole-page" if whole_page else "")
     if not refresh and (cached := cache.load(valid, variant)) is not None:
         return cached
 
@@ -192,7 +198,7 @@ def fetch(
     )
     if not isinstance(response, HttpResponse):
         return response
-    converted = _convert(valid, response, cache, find, now())
+    converted = _convert(valid, response, cache, find, now(), whole_page)
     if isinstance(converted, ToolMissing):
         return converted
     content, found_issues = converted
@@ -217,8 +223,11 @@ def cache_variant(url: str, config: Config) -> str:
 
 
 def cacheable(result: FetchResult) -> bool:
-    """Error and block pages aren't cached: they're often temporary or fixed by a config change."""
-    return not any(isinstance(issue, BotCheck | HttpErrorStatus) for issue in result.issues)
+    """Error, block and nearly empty pages aren't cached: they're often temporary or fixed by a
+    config change, and cheap to fetch again."""
+    return not any(
+        isinstance(issue, BotCheck | HttpErrorStatus | NearlyEmpty) for issue in result.issues
+    )
 
 
 def _looks_blocked(issues: list[Issue]) -> bool:

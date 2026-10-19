@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from agent_web.detect import bot_check, html_issues
-from agent_web.model import BotCheck, HiddenText, HttpErrorStatus, Issue, LikelyNeedsJavaScript
+from agent_web.model import (
+    BotCheck,
+    HiddenText,
+    HttpErrorStatus,
+    Issue,
+    LikelyNeedsJavaScript,
+    NearlyEmpty,
+    OutsideMain,
+)
 
 
 def issues(
@@ -12,6 +20,7 @@ def issues(
     text_chars: int = 8000,
     html_chars: int = 60_000,
     hidden_count: int = 0,
+    outside_main_chars: int = 0,
 ) -> list[Issue]:
     return html_issues(
         status=status,
@@ -20,6 +29,7 @@ def issues(
         text_chars=text_chars,
         html_chars=html_chars,
         hidden_count=hidden_count,
+        outside_main_chars=outside_main_chars,
     )
 
 
@@ -60,6 +70,17 @@ def test_bot_check_takes_precedence_over_js_shell() -> None:
     found = issues(title="Just a moment...", markdown="", text_chars=0, html_chars=300_000)
     assert any(isinstance(i, BotCheck) for i in found)
     assert not any(isinstance(i, LikelyNeedsJavaScript) for i in found)
+
+
+def test_nearly_empty_page_is_flagged() -> None:
+    assert issues(markdown="", text_chars=0, html_chars=600) == [NearlyEmpty(0)]
+    assert issues(markdown="  Hi ", text_chars=2, html_chars=600) == [NearlyEmpty(2)]
+    assert issues(markdown="A short but real page.", html_chars=600) == []
+
+
+def test_text_outside_main_is_reported() -> None:
+    assert issues(outside_main_chars=199) == []
+    assert issues(outside_main_chars=200) == [OutsideMain(200)]
 
 
 def test_hidden_text_count() -> None:

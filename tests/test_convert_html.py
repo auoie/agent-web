@@ -128,19 +128,27 @@ def test_code_blocks_keep_language(pandoc: Pandoc) -> None:
 @pytest.mark.parametrize(
     "hidden",
     [
-        '<div style="display:none">SECRET</div>',
-        '<div style="color:red; DISPLAY: none !important">SECRET</div>',
-        '<span style="visibility:hidden">SECRET</span>',
-        "<p hidden>SECRET</p>",
-        '<div style="font-size:0">SECRET</div>',
-        '<div style="font-size: 1px; color:#fff">SECRET</div>',
-        '<div style="opacity:0">SECRET</div>',
+        '<div style="display:none">SECRET INSTRUCTION</div>',
+        '<div style="color:red; DISPLAY: none !important">SECRET INSTRUCTION</div>',
+        '<span style="visibility:hidden">SECRET INSTRUCTION</span>',
+        "<p hidden>SECRET INSTRUCTION</p>",
+        '<div style="font-size:0">SECRET INSTRUCTION</div>',
+        '<div style="font-size: 1px; color:#fff">SECRET INSTRUCTION</div>',
+        '<div style="opacity:0">SECRET INSTRUCTION</div>',
     ],
 )
 def test_hidden_text_is_labeled(hidden: str, pandoc: Pandoc) -> None:
     result = convert_html(f"<p>Visible</p>{hidden}".encode(), "text/html", BASE, pandoc)
-    assert "⟦hidden on page: SECRET⟧" in result.markdown
+    assert "⟦hidden on page: SECRET INSTRUCTION⟧" in result.markdown
     assert result.hidden_count == 1
+
+
+def test_short_hidden_fragments_are_not_labeled(pandoc: Pandoc) -> None:
+    result = convert_html(
+        b'<p>Responses <span style="display:none">60</span></p>', "text/html", BASE, pandoc
+    )
+    assert result.hidden_count == 0
+    assert result.markdown == "Responses 60"
 
 
 def test_noscript_is_labeled(pandoc: Pandoc) -> None:
@@ -162,13 +170,119 @@ def test_visible_and_screen_reader_text_is_not_labeled(pandoc: Pandoc) -> None:
 
 def test_nested_hidden_text_is_labeled_once(pandoc: Pandoc) -> None:
     result = convert_html(
-        b'<div hidden><p>One</p><div style="display:none">Two</div></div>',
+        b'<div hidden><p>First hidden line</p><div style="display:none">Second line</div></div>',
         "text/html",
         BASE,
         pandoc,
     )
     assert result.hidden_count == 1
     assert result.markdown.count("⟦hidden on page") == 1
+
+
+HTML5_ONLY = [
+    "main",
+    "section",
+    "article",
+    "header",
+    "footer",
+    "nav",
+    "aside",
+    "figure",
+    "time",
+    "picture",
+    "details",
+    "dialog",
+    "search",
+]
+
+
+@pytest.mark.parametrize("tag", [t for t in HTML5_ONLY if t != "main"])
+def test_html5_content_without_body_tag_is_kept(tag: str, pandoc: Pandoc) -> None:
+    # libxml2 puts these into <head> when <body> is omitted (valid HTML5); pandoc ignores <head>.
+    out = md(f"<!doctype html><title>t</title><{tag}><p>First</p></{tag}><p>Second</p>", pandoc)
+    assert "First" in out
+    assert "Second" in out
+    assert out.index("First") < out.index("Second")
+
+
+def test_main_without_body_tag_is_kept(pandoc: Pandoc) -> None:
+    html = b"<!doctype html><title>t</title><main><p>First</p></main><p>Second</p>"
+    assert md(html.decode(), pandoc) == "First"  # pandoc converts only the single <main>
+    whole = convert_html(html, "text/html", BASE, pandoc, whole_page=True)
+    assert whole.markdown == "First\n\nSecond"
+
+
+def test_text_outside_a_single_main_is_counted(pandoc: Pandoc) -> None:
+    stray = "Important paragraph outside main. " * 10
+    html = (
+        "<body><nav>" + "Menu item " * 50 + "</nav><main><p>Inside</p></main>"
+        f"<p>{stray}</p><footer>" + "Footer link " * 50 + "</footer></body>"
+    ).encode()
+    result = convert_html(html, "text/html", BASE, pandoc)
+    assert result.markdown == "Inside"
+    assert result.outside_main_chars == len(stray.replace(" ", ""))
+    assert result.fallback_reason is None  # nav/footer/stray text being dropped is expected
+    whole = convert_html(html, "text/html", BASE, pandoc, whole_page=True)
+    assert "Important paragraph" in whole.markdown
+    assert whole.outside_main_chars == 0
+
+
+def test_no_outside_count_without_exactly_one_main(pandoc: Pandoc) -> None:
+    none = convert_html(b"<p>a</p><p>b</p>", "text/html", BASE, pandoc)
+    two = convert_html(b"<main>a</main><main>b</main><p>c</p>", "text/html", BASE, pandoc)
+    assert none.outside_main_chars == 0
+    assert two.outside_main_chars == 0
+
+
+def test_minified_page_without_head_or_body_tags(pandoc: Pandoc) -> None:
+    html = (
+        "<!doctype html><html lang=en><meta charset=utf-8><title>zolt.top</title>"
+        "<link rel=stylesheet href=/assets/style.css><main><h1>zolt.top</h1><p class=sub>Nothing "
+        "here yet.<p>This domain is being set up.<p class=meta>Updated <time datetime=2026-09-26>"
+        'September 26, 2026</time></main><script type="module" src="https://x.example/b.js"></script>'
+    )
+    result = convert_html(html.encode(), "text/html; charset=utf-8", BASE, pandoc)
+    assert result.markdown == (
+        "# zolt.top\n\nNothing here yet.\n\nThis domain is being set up.\n\n"
+        "Updated September 26, 2026"
+    )
+    assert result.fallback_reason is None
+
+
+def test_misplaced_content_goes_before_explicit_body(pandoc: Pandoc) -> None:
+    out = md("<title>t</title><header>Top</header><body><p>Middle</p></body>", pandoc)
+    assert out.index("Top") < out.index("Middle")
+
+
+def test_head_only_elements_stay_out_of_the_text(pandoc: Pandoc) -> None:
+    out = md(
+        '<head><title>Title</title><meta name="description" content="meta text">'
+        "<style>p{}</style></head><body><p>Body</p></body>",
+        pandoc,
+    )
+    assert out == "Body"
+
+
+def test_lossy_conversion_inside_main_falls_back(tmp_path: Path) -> None:
+    fake = tmp_path / "pandoc"
+    fake.write_text("#!/bin/sh\ncat >/dev/null\nexit 0\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    words = " ".join(f"word{i}" for i in range(100))
+    html = f"<nav>{'menu ' * 200}</nav><main><p>{words}</p></main>".encode()
+    result = convert_html(html, "text/html", BASE, Pandoc(str(fake), (3, 1)))
+    assert result.fallback_reason is not None
+    assert "word99" in result.markdown
+
+
+def test_lossy_conversion_falls_back_to_plain_text(tmp_path: Path) -> None:
+    fake = tmp_path / "pandoc"
+    fake.write_text("#!/bin/sh\ncat >/dev/null\nexit 0\n")  # succeeds but outputs nothing
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    words = " ".join(f"word{i}" for i in range(100))
+    result = convert_html(f"<p>{words}</p>".encode(), "text/html", BASE, Pandoc(str(fake), (3, 1)))
+    assert "word99" in result.markdown
+    assert result.fallback_reason is not None
+    assert "kept only 0 of" in result.fallback_reason
 
 
 def test_title_and_counts(pandoc: Pandoc) -> None:

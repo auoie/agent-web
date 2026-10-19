@@ -25,6 +25,8 @@ from agent_web.model import (
     HttpErrorStatus,
     Issue,
     LikelyNeedsJavaScript,
+    NearlyEmpty,
+    OutsideMain,
     PdfDocument,
     PdfLayoutWarning,
     PlainText,
@@ -101,6 +103,18 @@ def describe_issue(issue: Issue) -> str:
                 f"very little text ({text_chars:,} chars) came out of a large page "
                 f"({html_chars:,} chars of HTML): it probably builds its content with JavaScript, "
                 "which this tool doesn't run"
+            )
+        case NearlyEmpty(text_chars):
+            return (
+                f"almost no text came out of this page ({text_chars} characters). It may build its "
+                "content with JavaScript (not run here) or keep it in frames or images. Say the "
+                "page couldn't be read instead of guessing what it contains"
+            )
+        case OutsideMain(text_chars):
+            return (
+                f"this page marks its main content with <main>, so only that was converted; "
+                f"{text_chars:,} characters of other text outside it were left out (navigation, "
+                "headers and footers aren't counted). Add --whole-page to include everything"
             )
         case HiddenText(count):
             return (

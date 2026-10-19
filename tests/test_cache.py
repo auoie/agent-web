@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from agent_web.cache import PageCache, decode, encode
+from agent_web.cache import FORMAT_VERSION, PageCache, decode, encode
 from agent_web.model import (
     BinaryFile,
     BotCheck,
@@ -21,6 +21,8 @@ from agent_web.model import (
     Issue,
     LikelyNeedsJavaScript,
     Meta,
+    NearlyEmpty,
+    OutsideMain,
     PdfDocument,
     PdfLayoutWarning,
     PlainText,
@@ -42,6 +44,8 @@ ISSUES: list[Issue] = [
     HttpErrorStatus(404),
     BotCheck("captcha"),
     LikelyNeedsJavaScript(100, 1),
+    NearlyEmpty(3),
+    OutsideMain(500),
     HiddenText(2),
     ScannedPdf(),
     PdfLayoutWarning(),
@@ -70,14 +74,20 @@ def test_round_trip_every_variant(content: Content) -> None:
         None,
         [],
         {"version": 99},
-        {"version": 1, "content": {"type": "html"}, "issues": []},
-        {"version": 1, "content": {**valid_content(), "type": "video"}, "issues": []},
-        {"version": 1, "content": valid_content(), "issues": [{"type": "nope"}]},
-        {"version": 1, "content": valid_content(), "issues": ["x"]},
+        {"version": FORMAT_VERSION, "content": {"type": "html"}, "issues": []},
+        {"version": FORMAT_VERSION, "content": {**valid_content(), "type": "video"}, "issues": []},
+        {"version": FORMAT_VERSION, "content": valid_content(), "issues": [{"type": "nope"}]},
+        {"version": FORMAT_VERSION, "content": valid_content(), "issues": ["x"]},
     ],
 )
 def test_bad_payloads_decode_to_none(payload: object) -> None:
     assert decode(payload) is None
+
+
+def test_entries_from_an_older_format_are_misses() -> None:
+    payload = encode(FetchResult(CONTENTS[0], ()))
+    assert decode(payload) is not None
+    assert decode({**payload, "version": FORMAT_VERSION - 1}) is None
 
 
 def test_store_and_load(tmp_path: Path) -> None:
