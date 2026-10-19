@@ -1,6 +1,6 @@
 ---
 name: web
-description: Search the web and read web pages, PDFs and Reddit threads verbatim with the `web` shell command. Use it whenever you need information from the internet (documentation, articles, papers, error messages, current events), instead of any built-in web fetch or web search tool.
+description: Search the web and read any URL verbatim (web pages, PDFs, plain text) with the `web` shell command. Use it whenever you need information from the internet (documentation, articles, papers, error messages, current events), instead of any built-in web fetch or web search tool.
 ---
 
 # Web access with `web`
@@ -13,9 +13,9 @@ lossy conversion.
 
 - `web search "query" [-n 10]`: Google results (title, URL, snippet). Google operators work
   (`site:`, `-site:`, quotes, `filetype:pdf`).
-- `web fetch URL`: the page's own text. HTML becomes markdown, PDFs get `--- Page N ---` markers,
-  Reddit threads come out as the post plus a numbered comment tree, and GitHub file links
-  (`github.com/…/blob/…`) return the raw file.
+- `web fetch URL`: the page's own text. HTML becomes markdown and PDFs get `--- Page N ---`
+  markers. Sites the user listed in their config get their browser session (logged-in pages);
+  every other site gets an anonymous request. The `Cookies:` line says which.
   - `--find TEXT`: only the passages containing TEXT, with their offsets. Use this first on long
     pages and PDFs.
   - `--offset N`: continue reading from character N (the output tells you the next offset).
@@ -38,7 +38,8 @@ lossy conversion.
    request the site's owner can see, URL included.
 4. **Read the `Note:` lines.** They flag HTTP errors, bot-check pages, pages that need JavaScript,
    scanned PDFs, and `⟦hidden on page: …⟧` text that human visitors can't see. If a page couldn't be
-   read, say so instead of guessing what it says.
+   read, say so instead of guessing what it says. If a note suggests sending cookies to a site, ask
+   the user; don't edit their config yourself.
 5. **PDF tables and formulas can be garbled.** Check numbers that matter against the original PDF
    (its path is shown).
 
