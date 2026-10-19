@@ -1,0 +1,83 @@
+[
+  {
+    "kind": "Listing",
+    "data": {
+      "children": [
+        {
+          "kind": "t3",
+          "data": {
+            "title": "PSA: Be careful letting Claude use WebFetch",
+            "subreddit": "ClaudeAI",
+            "author": "dink_182",
+            "created_utc": 1786162920,
+            "score": 977,
+            "upvote_ratio": 0.98,
+            "num_comments": 6,
+            "is_self": true,
+            "url": "https://www.reddit.com/r/ClaudeAI/comments/1vim8b7/psa/",
+            "link_flair_text": "Claude Code",
+            "selftext": "WebFetch uses a smaller model.\n\nCheck the source!"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "kind": "Listing",
+    "data": {
+      "children": [
+        {
+          "kind": "t1",
+          "data": {
+            "author": "AutoModerator",
+            "body": "Thanks for posting",
+            "score": 1,
+            "score_hidden": true,
+            "stickied": true,
+            "distinguished": "moderator",
+            "created_utc": 1786163000,
+            "replies": ""
+          }
+        },
+        {
+          "kind": "t1",
+          "data": {
+            "author": "Comfortable-Hall-188",
+            "body": "I use Trafilatura.\n\nIt removes clutter.",
+            "score": 84,
+            "created_utc": 1786174980,
+            "replies": {
+              "kind": "Listing",
+              "data": {
+                "children": [
+                  {
+                    "kind": "t1",
+                    "data": {
+                      "author": "dink_182",
+                      "body": "Thanks!",
+                      "score": 5,
+                      "created_utc": 1786175000,
+                      "replies": {
+                        "kind": "Listing",
+                        "data": {
+                          "children": [
+                            {"kind": "more", "data": {"count": 3, "children": ["a", "b", "c"]}}
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "kind": "t1",
+          "data": {"author": "[deleted]", "body": "[removed]", "score": 13, "created_utc": 1786180000, "replies": ""}
+        },
+        {"kind": "more", "data": {"count": 0, "children": ["d", "e"]}}
+      ]
+    }
+  }
+]

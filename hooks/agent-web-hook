@@ -1,0 +1,6 @@
+#!/bin/sh
+# Claude Code hook entry point: `agent-web-hook <pre-tool-use|user-prompt-submit|post-tool-use>`
+# with the hook payload on stdin. See src/agent_web/hooks.py.
+root=$(CDPATH='' cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)
+UV_PROJECT_ENVIRONMENT="${AGENT_WEB_VENV:-$root/.venv-runtime}" \
+    exec uv run --quiet --frozen --no-dev --project "$root" python -m agent_web.hooks "$@"
