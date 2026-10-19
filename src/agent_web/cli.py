@@ -15,7 +15,7 @@ MAX_SEARCH_RESULTS = 50
 DESCRIPTION = """\
 Search the web and read pages verbatim: no model summarizes anything in between.
 
-  web search "query" [-n 10]      Google results: title, URL, snippet
+  web search QUERY... [-n 10]     Google results: title, URL, snippet
   web fetch URL [--find TEXT]     the page's own text (HTML -> markdown, PDF -> text)
   web doctor                      check pandoc, config and browser cookies
 
@@ -37,7 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     search = commands.add_parser(
         "search", help="search Google with your browser session", exit_on_error=False
     )
-    search.add_argument("query", help="search query (Google operators like site: work)")
+    search.add_argument(
+        "query", help="search query, quoted or as several words (Google operators like site: work)"
+    )
     search.add_argument("-n", type=int, default=10, help="number of results (default 10, max 50)")
     search.add_argument("--json", action="store_true", help="print JSON instead of text")
 
@@ -63,6 +65,35 @@ def build_parser() -> argparse.ArgumentParser:
     config = commands.add_parser("config", help="show the config path and effective settings")
     config.add_argument("--example", action="store_true", help="print an example config file")
     return parser
+
+
+def search_args(args: list[str]) -> list[str]:
+    """Rewrite `web search` arguments so the query can be written as several words.
+
+    Agents write `web search vodvod.top -site:vodvod.top "not working" -n 20`. Every word that
+    isn't one of search's own options becomes part of one query, so Google operators like
+    `-site:` aren't taken for options. A word with spaces in it was quoted in the shell, so it is
+    quoted again as a phrase, unless it is the whole query.
+    """
+    options: list[str] = []
+    words: list[str] = []
+    rest = iter(args)
+    for arg in rest:
+        if arg == "--":
+            words.extend(rest)
+        elif arg in ("--json", "-h", "--help"):
+            options.append(arg)
+        elif arg == "-n":
+            options += [arg, *([value] if (value := next(rest, None)) is not None else [])]
+        elif arg.startswith("-n") and arg[2:].isdigit():
+            options.append(arg)
+        else:
+            words.append(arg)
+    if not words:
+        return options
+    if len(words) > 1:
+        words = [f'"{w}"' if any(c.isspace() for c in w) and '"' not in w else w for w in words]
+    return [*options, "--", " ".join(words)]
 
 
 def _fail(failure: Failure, err: TextIO) -> int:
@@ -151,8 +182,11 @@ def _config(args: argparse.Namespace, config: Config, out: TextIO) -> int:
 
 def main(argv: list[str] | None = None, out: TextIO = sys.stdout, err: TextIO = sys.stderr) -> int:
     parser = build_parser()
+    raw = sys.argv[1:] if argv is None else argv
+    if raw[:1] == ["search"]:
+        raw = ["search", *search_args(raw[1:])]
     try:
-        args = parser.parse_args(argv)
+        args = parser.parse_args(raw)
     except argparse.ArgumentError as e:
         print(f"web: {e}", file=err)
         return EXIT_USAGE
