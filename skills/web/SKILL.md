@@ -23,9 +23,9 @@ lossy conversion.
   - `--offset N`: continue reading from character N (the output tells you the next offset).
   - `--max-chars N`: how much to print (default 25,000).
   - `--refresh`: ignore the one-hour cache.
-  - `--whole-page`: when a page has a single `<main>` element only that is converted (menus,
-    headers and footers are dropped). If a `Note:` says text outside it was left out and you need
-    it, add this flag.
+  - `--whole-page`: show the entire page. By default, when a page marks its main content (an
+    HTML `<main>` element), only that part is shown, without the site's menus, header and footer.
+    If other text was left out, a `Note:` says how much; add this flag if you might need it.
   - `--json`: machine-readable output.
 - `web doctor`: check that pandoc, the config and the Google sign-in work.
 
@@ -53,7 +53,7 @@ web fetch https://www.reddit.com/r/ClaudeCode/comments/1x9ef9c/
 web fetch https://github.com/psf/requests/blob/main/src/requests/api.py
 
 # When a Note asks for it
-web fetch https://example.com/page --whole-page   # text outside <main> was left out
+web fetch https://example.com/page --whole-page   # Note: text outside the main content was left out
 web fetch https://example.com/page --refresh      # cached copy is out of date
 ```
 
