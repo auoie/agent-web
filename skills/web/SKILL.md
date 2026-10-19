@@ -29,6 +29,32 @@ lossy conversion.
   - `--json`: machine-readable output.
 - `web doctor`: check that pandoc, the config and the Google sign-in work.
 
+## Examples
+
+```bash
+# Search: the whole query in single quotes, phrases in double quotes inside
+web search 'pandoc lua filter tables'
+web search 'site:docs.python.org argparse subparsers'
+web search 'vodvod.top -site:vodvod.top "not working"' -n 20
+web search 'attention is all you need filetype:pdf'
+
+# Read a page. Quote URLs that contain ? or & (the shell treats & as "run in background")
+web fetch https://en.wikipedia.org/wiki/Pandoc
+web fetch 'https://www.youtube.com/results?search_query=pandoc&sp=EgIQAQ'
+
+# Long page or PDF: find the passage first, then read on from its offset
+web fetch https://docs.python.org/3/library/argparse.html --find 'add_subparsers'
+web fetch https://docs.python.org/3/library/argparse.html --offset 41250
+web fetch https://arxiv.org/pdf/1706.03762 --find 'BLEU'
+
+# When a Note asks for it
+web fetch https://example.com/page --whole-page   # text outside <main> was left out
+web fetch https://example.com/page --refresh      # cached copy is out of date
+```
+
+A typical research loop: search, fetch the most promising results, `--find` the part that answers
+the question, read around it with `--offset`, then quote the exact text with its URL.
+
 ## Rules
 
 1. **Search snippets aren't facts.** Fetch the page before relying on anything from a search.
