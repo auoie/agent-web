@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 import shlex
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import assert_never
@@ -187,6 +188,26 @@ def _cookie_line(result: FetchResult) -> str:
     return f"sent (allowlisted domain {urlsplit(meta.final_url).hostname})"
 
 
+def _age(seconds: float) -> str:
+    if seconds < 90:
+        return f"{max(0, int(seconds))} s ago"
+    if seconds < 90 * 60:
+        return f"{int(seconds // 60)} min ago"
+    return f"{seconds / 3600:.1f} h ago"
+
+
+def _fetched_line(result: FetchResult, now: float) -> str:
+    meta = result.content.meta
+    details = f"HTTP {meta.status}, {meta.content_type or 'no content-type'}"
+    if isinstance(result.content, RedditThread):
+        line = f"Fetched: {meta.url} via Reddit's JSON API ({details})"
+    else:
+        line = f"Fetched: {meta.final_url} ({details})"
+    if result.from_cache:
+        line += f" [from cache, fetched {_age(now - meta.fetched_at)}; --refresh fetches it again]"
+    return line
+
+
 def render_fetch(
     result: FetchResult,
     *,
@@ -194,15 +215,12 @@ def render_fetch(
     max_chars: int,
     find: str | None = None,
     fence: Callable[[], str] = new_fence,
+    now: Callable[[], float] = time.time,
 ) -> str:
     content = result.content
     meta = content.meta
     text = body(content)
-    lines = [
-        f"Fetched: {meta.final_url} (HTTP {meta.status}, "
-        f"{meta.content_type or 'no content-type'})"
-        + (" [from cache]" if result.from_cache else ""),
-    ]
+    lines = [_fetched_line(result, now())]
     if title := title_of(content):
         lines.append(f"Title: {title}")
     lines.append(f"Kind: {kind_line(content)}")

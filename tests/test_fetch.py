@@ -66,6 +66,29 @@ def test_second_fetch_comes_from_cache_and_refresh_bypasses_it(
     assert len(server.seen["/html"]) == 2
 
 
+def test_error_and_block_pages_are_not_cached(server: Server, config: Config) -> None:
+    for path in ("/captcha", "/notfound"):
+        ok(server.url(path), config)
+        assert not ok(server.url(path), config).from_cache
+        assert len(server.seen[path]) == 2
+
+
+def test_allowing_cookies_bypasses_the_anonymous_cache_entry(
+    server: Server, config: Config
+) -> None:
+    class NoCookies:
+        def for_url(self, url: str) -> dict[str, str]:
+            return {}
+
+    ok(server.url("/html"), config)
+    assert ok(server.url("/html"), config).from_cache
+    with_cookies = replace(config, cookie_domains=("127.0.0.1",))
+    result = fetch(server.url("/html"), with_cookies, cookie_source=NoCookies())
+    assert isinstance(result, FetchResult)
+    assert not result.from_cache
+    assert len(server.seen["/html"]) == 2
+
+
 def test_http_error_page(server: Server, config: Config) -> None:
     result = ok(server.url("/notfound"), config)
     assert HttpErrorStatus(404) in result.issues

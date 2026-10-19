@@ -91,6 +91,14 @@ def test_store_and_load(tmp_path: Path) -> None:
     assert cache.load("https://example.com/other") is None
 
 
+def test_variants_are_separate_entries(tmp_path: Path) -> None:
+    cache = PageCache(tmp_path, ttl=60, max_bytes=10_000_000)
+    cache.store(URL, FetchResult(CONTENTS[0], ()), "anonymous")
+    assert cache.load(URL, "anonymous") is not None
+    assert cache.load(URL, "cookies:firefox") is None
+    assert cache.load(URL) is None
+
+
 def test_expiry(tmp_path: Path) -> None:
     clock = [1000.0]
     cache = PageCache(tmp_path, ttl=60, max_bytes=10_000_000, now=lambda: clock[0])

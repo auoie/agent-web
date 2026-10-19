@@ -41,8 +41,11 @@ from agent_web.model import (
 FORMAT_VERSION = 1
 
 
-def url_key(url: str) -> str:
-    return hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
+def url_key(url: str, variant: str = "") -> str:
+    """Cache file key. `variant` separates results that depend on more than the URL (e.g. whether
+    cookies were allowed), so changing that setting never serves the old result."""
+    material = f"{url}\n{variant}" if variant else url
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
 class _Bad(Exception):
@@ -229,11 +232,11 @@ class PageCache:
     def files_dir(self) -> Path:
         return self.directory / "files"
 
-    def page_path(self, url: str) -> Path:
-        return self.pages_dir / f"{url_key(url)}.json"
+    def page_path(self, url: str, variant: str = "") -> Path:
+        return self.pages_dir / f"{url_key(url, variant)}.json"
 
-    def load(self, url: str) -> FetchResult | None:
-        path = self.page_path(url)
+    def load(self, url: str, variant: str = "") -> FetchResult | None:
+        path = self.page_path(url, variant)
         try:
             if self.ttl <= 0 or self._now() - path.stat().st_mtime > self.ttl:
                 return None
@@ -245,8 +248,8 @@ class PageCache:
             return None
         return replace(result, from_cache=True)
 
-    def store(self, url: str, result: FetchResult) -> Path:
-        path = self.page_path(url)
+    def store(self, url: str, result: FetchResult, variant: str = "") -> Path:
+        path = self.page_path(url, variant)
         _atomic_write(path, json.dumps(encode(result), ensure_ascii=False).encode("utf-8"))
         self.prune()
         return path

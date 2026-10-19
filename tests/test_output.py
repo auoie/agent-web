@@ -15,6 +15,7 @@ from agent_web.model import (
     Issue,
     Meta,
     PdfDocument,
+    RedditThread,
 )
 from agent_web.output import (
     exit_code_for,
@@ -82,14 +83,26 @@ def test_header_lines_and_notes() -> None:
         (HttpErrorStatus(403), HiddenText(2)),
         from_cache=True,
     )
-    out = render_fetch(result, offset=0, max_chars=100, fence=fixed_fence)
+    out = render_fetch(result, offset=0, max_chars=100, fence=fixed_fence, now=lambda: 600.0)
     lines = out.splitlines()
-    assert lines[0].endswith("[from cache]")
+    assert lines[0].endswith("[from cache, fetched 10 min ago; --refresh fetches it again]")
     assert "Title: Thread" in lines
     assert "Kind: web page" in lines
     assert "Cookies: sent (allowlisted domain www.reddit.com)" in lines
     assert any(line.startswith("Note: the server answered HTTP 403") for line in lines)
     assert any("⟦hidden on page" in line for line in lines)
+
+
+def test_reddit_header_names_the_thread() -> None:
+    thread = RedditThread(
+        meta(final_url="https://www.reddit.com/comments/abc.json?raw_json=1"),
+        title="T",
+        markdown="x",
+        comments=1,
+        not_loaded=0,
+    )
+    first = render_fetch(FetchResult(thread, ()), offset=0, max_chars=10).splitlines()[0]
+    assert first.startswith(f"Fetched: {URL} via Reddit's JSON API (HTTP 200")
 
 
 def test_fence_is_random_per_call() -> None:

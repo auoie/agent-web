@@ -31,7 +31,7 @@ from agent_web.model import (
     RedditThread,
 )
 from agent_web.sites import reddit
-from agent_web.urls import validate_url
+from agent_web.urls import domain_matches, hostname, validate_url
 
 Kind = Literal["html", "pdf", "text", "binary"]
 _TEXT_TYPES = frozenset(
@@ -165,7 +165,8 @@ def fetch(
     if isinstance(valid, InvalidUrl):
         return valid
     cache = PageCache(config.cache_dir, config.cache_ttl, config.cache_max_bytes)
-    if not refresh and (cached := cache.load(valid)) is not None:
+    variant = cache_variant(valid, config)
+    if not refresh and (cached := cache.load(valid, variant)) is not None:
         return cached
 
     source = cookie_source or AllowlistCookieSource(
@@ -178,7 +179,7 @@ def fetch(
         thread = _try_reddit(valid, post_id, config, source, now())
         if thread is not None:
             result = FetchResult(thread, ())
-            cache.store(valid, result)
+            cache.store(valid, result, variant)
             return result
 
     response = download(
@@ -201,8 +202,23 @@ def fetch(
         issues.append(CookiesMightHelp(reddit.COOKIE_DOMAIN))
 
     result = FetchResult(content, tuple(issues))
-    cache.store(valid, result)
+    if cacheable(result):
+        cache.store(valid, result, variant)
     return result
+
+
+def cache_variant(url: str, config: Config) -> str:
+    """What besides the URL decides the result: whether (and from which browser) cookies are sent.
+    Changing `fetch.cookie_domains` or `cookies.browser` therefore never serves an old result."""
+    host = hostname(url)
+    if any(domain_matches(host, domain) for domain in config.cookie_domains):
+        return f"cookies:{config.browser}"
+    return "anonymous"
+
+
+def cacheable(result: FetchResult) -> bool:
+    """Error and block pages aren't cached: they're often temporary or fixed by a config change."""
+    return not any(isinstance(issue, BotCheck | HttpErrorStatus) for issue in result.issues)
 
 
 def _looks_blocked(issues: list[Issue]) -> bool:
