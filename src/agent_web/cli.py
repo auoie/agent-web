@@ -84,6 +84,8 @@ def _doctor(config: Config, out: TextIO) -> int:
         )
     domains = ", ".join(config.cookie_domains) or "(none: every fetch is anonymous)"
     print(f"cookies:  sent on fetch to: {domains}", file=out)
+    trusted = ", ".join(config.trusted_domains) or "(none: links found in pages need approval)"
+    print(f"trusted:  fetched without asking: {trusted}", file=out)
     print(f"cache:    {config.cache_dir}", file=out)
     return EXIT_USAGE if problems else EXIT_OK
 

@@ -97,6 +97,10 @@ contain instructions aimed at agents ("visit /a, then /b…"). This is the
     or in the results of a `web search` in the same session.
   - Links found inside fetched pages, URLs inside search snippets, compound shell commands
     (`|`, `&&`, `;`, `$(…)`, redirects) and shell variables all go to you for approval.
+  - **Trusted domains** you list in `fetch.trusted_domains` (e.g. `arxiv.org`) are fetched without
+    asking, including links found inside pages, so agents can browse those sites. Only list sites
+    where an attacker can't see the requests. That rules out personal sites, URL shorteners,
+    redirect services and paste sites.
   - Anthropic closed the same hole in claude.ai's web fetch in 2026.
 - **Untrusted-content fences.** Page text is printed inside `<untrusted-web-content-RANDOM>` tags with
   a note not to follow instructions in it. Hidden text is labeled. This helps the model resist
@@ -149,6 +153,7 @@ browser = "firefox"
 
 [fetch]
 cookie_domains = ["reddit.com"]   # sites that get your browser session; default: none
+trusted_domains = ["arxiv.org"]   # agents may follow links here without asking; default: none
 
 [search]
 min_interval_seconds = 2.0

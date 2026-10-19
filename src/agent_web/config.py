@@ -32,6 +32,10 @@ min_interval_seconds = 2.0
 # Domains that receive your browser cookies when fetched (subdomains included).
 # Every other site gets an anonymous request.
 cookie_domains = []
+# Domains whose URLs agents may fetch without asking, even links found inside pages (Claude Code
+# plugin). Only list sites where an attacker can't see the requests (no personal sites, URL
+# shorteners, redirect services or paste sites).
+trusted_domains = []
 timeout_seconds = 30
 max_download_mb = 25
 # Allow fetching localhost / private network addresses (off: protects local services)
@@ -76,6 +80,7 @@ class Config:
     cookie_file: Path | None = None
     search_min_interval: float = 2.0
     cookie_domains: tuple[str, ...] = ()
+    trusted_domains: tuple[str, ...] = ()
     timeout: float = 30.0
     max_download_bytes: int = 25 * 1024 * 1024
     allow_private_networks: bool = False
@@ -90,7 +95,13 @@ _SCHEMA: dict[str, frozenset[str]] = {
     "cookies": frozenset({"browser", "cookie_file"}),
     "search": frozenset({"min_interval_seconds"}),
     "fetch": frozenset(
-        {"cookie_domains", "timeout_seconds", "max_download_mb", "allow_private_networks"}
+        {
+            "cookie_domains",
+            "trusted_domains",
+            "timeout_seconds",
+            "max_download_mb",
+            "allow_private_networks",
+        }
     ),
     "output": frozenset({"max_chars"}),
     "cache": frozenset({"dir", "ttl_seconds", "max_mb"}),
@@ -129,13 +140,23 @@ def _string(table: Mapping[str, Any], key: str, where: str) -> str | None:
     return value.strip()
 
 
-def _domain(raw: object) -> str:
+def _domain(raw: object, key: str) -> str:
     if not isinstance(raw, str):
-        raise _Invalid("fetch.cookie_domains must be a list of strings")
+        raise _Invalid(f"fetch.{key} must be a list of strings")
     domain = raw.strip().lower().lstrip(".")
     if not domain or any(c in domain for c in "/: \t"):
-        raise _Invalid(f"fetch.cookie_domains: {raw!r} is not a bare domain like 'reddit.com'")
+        raise _Invalid(f"fetch.{key}: {raw!r} is not a bare domain like 'reddit.com'")
     return domain
+
+
+def _domains(table: Mapping[str, Any], key: str) -> tuple[str, ...] | None:
+    if key not in table:
+        return None
+    value: object = table[key]
+    if not isinstance(value, list):
+        raise _Invalid(f"fetch.{key} must be a list of strings")
+    items = cast("list[object]", value)
+    return tuple(sorted({_domain(item, key) for item in items}))
 
 
 def _check_keys(data: Mapping[str, Any]) -> None:
@@ -165,12 +186,10 @@ def _parse(data: Mapping[str, Any]) -> Config:
         config = replace(config, search_min_interval=interval)
 
     fetch = _table(data, "fetch")
-    if "cookie_domains" in fetch:
-        domains: object = fetch["cookie_domains"]
-        if not isinstance(domains, list):
-            raise _Invalid("fetch.cookie_domains must be a list of strings")
-        items = cast("list[object]", domains)
-        config = replace(config, cookie_domains=tuple(sorted({_domain(d) for d in items})))
+    if (cookie_domains := _domains(fetch, "cookie_domains")) is not None:
+        config = replace(config, cookie_domains=cookie_domains)
+    if (trusted_domains := _domains(fetch, "trusted_domains")) is not None:
+        config = replace(config, trusted_domains=trusted_domains)
     if (timeout := _number(fetch, "timeout_seconds", "fetch", 1)) is not None:
         config = replace(config, timeout=timeout)
     if (max_mb := _number(fetch, "max_download_mb", "fetch", 1)) is not None:

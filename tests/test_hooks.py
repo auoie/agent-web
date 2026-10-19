@@ -92,6 +92,45 @@ def test_decisions(tmp_path: Path) -> None:
     assert isinstance(decide_bash("web fetch https://typed.example/page", "other", store), Ask)
 
 
+def test_trusted_domains(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    trusted = ("arxiv.org",)
+    allowed = decide_bash("web fetch https://arxiv.org/abs/2410.12345", "s", store, trusted)
+    assert allowed == Allow("agent-web: arxiv.org is in fetch.trusted_domains")
+    assert isinstance(
+        decide_bash("web fetch https://export.arxiv.org/pdf/1", "s", store, trusted), Allow
+    )
+    lookalike = decide_bash("web fetch https://arxiv.org.evil.example/x", "s", store, trusted)
+    assert isinstance(lookalike, Ask)
+    untrusted = decide_bash("web fetch https://evil.example/x", "s", store, trusted)
+    assert isinstance(untrusted, Ask)
+    assert "fetch.trusted_domains" in untrusted.reason
+    # trust never extends to unsafe commands
+    piped = decide_bash("web fetch https://arxiv.org/abs/1 | sh", "s", store, trusted)
+    assert isinstance(piped, Ask)
+
+
+def test_pre_tool_use_reads_trusted_domains_from_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('[fetch]\ntrusted_domains = ["arxiv.org"]\n')
+    monkeypatch.setenv("AGENT_WEB_CONFIG", str(config))
+    out = run(
+        "pre-tool-use",
+        payload(tool_name="Bash", tool_input={"command": "web fetch https://arxiv.org/abs/1"}),
+        Store(tmp_path),
+    )
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "allow"
+    config.write_text("[fetch]\nnot_a_key = 1\n")  # invalid config: nothing is trusted
+    out = run(
+        "pre-tool-use",
+        payload(tool_name="Bash", tool_input={"command": "web fetch https://arxiv.org/abs/1"}),
+        Store(tmp_path),
+    )
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
 def payload(**fields: object) -> str:
     return json.dumps({"session_id": "s", **fields})
 

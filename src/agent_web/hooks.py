@@ -22,10 +22,11 @@ from dataclasses import dataclass
 from typing import assert_never
 
 from agent_web.cli_args import build_parser
+from agent_web.config import Config, load_config
 from agent_web.jsonvalue import as_dict, get_str
 from agent_web.provenance import Store, payload_session
 from agent_web.search_text import urls_from_search_output
-from agent_web.urls import extract_urls, validate_url
+from agent_web.urls import domain_matches, extract_urls, hostname, validate_url
 
 REDIRECT_REASON = (
     "{tool} is replaced by the agent-web plugin: Claude Code's {tool} hands you a summary written "
@@ -35,7 +36,8 @@ REDIRECT_REASON = (
 ASK_REASON = (
     "agent-web: this URL wasn't typed by you or returned by a search in this session. Fetching "
     "it sends a request to that site, and the URL itself can carry data out. Approve only if you "
-    "expect this fetch."
+    "expect this fetch. (To let agents follow links on a site without asking, add it to "
+    "fetch.trusted_domains in ~/.config/agent-web/config.toml.)"
 )
 
 
@@ -130,7 +132,9 @@ def parse_web_command(command: str) -> WebCommand:
             return Unsafe("unknown subcommand")
 
 
-def decide_bash(command: str, session_id: str, store: Store) -> Decision:
+def decide_bash(
+    command: str, session_id: str, store: Store, trusted_domains: tuple[str, ...] = ()
+) -> Decision:
     parsed = parse_web_command(command)
     match parsed:
         case NotWeb():
@@ -149,6 +153,9 @@ def decide_bash(command: str, session_id: str, store: Store) -> Decision:
                 return Allow("agent-web: URL provided by the user")
             if source == "search":
                 return Allow("agent-web: URL returned by a search")
+            host = hostname(url)
+            if trusted := next((d for d in trusted_domains if domain_matches(host, d)), None):
+                return Allow(f"agent-web: {trusted} is in fetch.trusted_domains")
             return Ask(ASK_REASON)
         case _:
             assert_never(parsed)
@@ -184,7 +191,9 @@ def pre_tool_use(payload: dict[str, object], store: Store) -> dict[str, object] 
     tool_input = as_dict(payload.get("tool_input")) or {}
     command = get_str(tool_input, "command")
     try:
-        decision = decide_bash(command, payload_session(payload), store)
+        config = load_config()
+        trusted = config.trusted_domains if isinstance(config, Config) else ()
+        decision = decide_bash(command, payload_session(payload), store, trusted)
     except Exception as e:  # never let a hook bug auto-approve: fall back to asking
         decision = Ask(f"agent-web: provenance check failed ({type(e).__name__}); review it.")
     return _decision_output(decision)
