@@ -1,13 +1,14 @@
 ---
 name: web
-description: Search the web and read any URL verbatim (web pages, PDFs, plain text) with the `web` shell command. Use it whenever you need information from the internet (documentation, articles, papers, error messages, current events), instead of any built-in web fetch or web search tool.
+description: Search the web and read source text (web pages, PDFs, plain text) with the `web` shell command. Use it whenever you need information from the internet (documentation, articles, papers, error messages, current events), instead of any built-in web fetch or web search tool.
 ---
 
 # Web access with `web`
 
-`web` prints sources as they are: no model summarizes anything between the page and you. Use it
-instead of built-in web fetch or search tools, which may hand you another model's summary or a
-lossy conversion.
+`web` returns search results and source text without an intermediate AI summary. HTML is
+converted to Markdown and PDF text is reconstructed from page layout; known omissions and
+conversion problems are reported in `Note:` lines. Use it instead of built-in web fetch or
+search tools, which may hand you another model's summary or a lossy conversion.
 
 ## Commands
 
@@ -24,7 +25,8 @@ lossy conversion.
     not a regex, and case doesn't matter.
   - `--offset N`: show the page from character N onward. Use an offset from `--find` or from the
     continuation hint; to see what comes just before a match, use a somewhat smaller N.
-  - `--max-chars N`: how many characters of page text to show (default 25,000).
+  - `--max-chars N`: maximum characters of page text to show (default 25,000), shared across
+    `--find` passages. Headers, notes, and added `…` omission markers are extra.
   - `--refresh`: download again instead of using the copy cached in the last hour.
   - `--whole-page`: show the entire page. By default, when a page marks its main content (an
     HTML `<main>` element), only that part is shown, without the site's menus, header and footer.
@@ -92,6 +94,8 @@ the question, read around it with `--offset`, then quote the exact text with its
   with a distinctive word first instead of paging through with `--offset`.
 - **Raising `--max-chars` a lot.** Your harness may cut long command output (Claude Code cuts it
   at 30,000 characters), so the end gets lost. Keep the default and continue with `--offset`.
+  When batching fetches, divide the available tool-output budget across commands and leave room
+  for metadata.
 - **Firing off many searches at once.** Searches are spaced 2 seconds apart to protect the user's
   Google account, so they queue up. Run a few, read the results, then refine.
 - **Retrying a blocked page.** If a Note says the page is a bot check or an error page, retrying

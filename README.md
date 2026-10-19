@@ -1,8 +1,8 @@
 # agent-web
 
-Verbatim web search and page reading for AI coding agents: a `web` command, plus a skill that
-teaches agents to use it. It works with any agent that can run shell commands (Claude Code,
-OpenCode, Codex, …).
+Web search and source text for AI coding agents, without an intermediate AI summary: a `web`
+command, plus a skill that teaches agents to use it. It works with any agent that can run shell
+commands (Claude Code, OpenCode, Codex, …).
 
 Built-in web tools lose information:
 - **Claude Code's `WebFetch`** doesn't show Claude the page. It converts the HTML with Turndown
@@ -15,7 +15,9 @@ Built-in web tools lose information:
   `websearch` goes through a third-party service (Exa, Firecrawl, Parallel, Tavily or TinyFish).
 - **Codex's `web_search`** runs on OpenAI's side and by default searches an index OpenAI maintains.
 
-agent-web prints the source itself.
+agent-web returns converted source text. HTML becomes Markdown and PDF text is reconstructed
+from page layout, so formatting can change and PDF tables can lose structure. Known omissions
+and conversion problems are reported in `Note:` lines; long output can be read in chunks.
 
 ## What it does
 
@@ -242,12 +244,15 @@ Title: Example
 
 `--json` prints the same data as JSON.
 
+`--max-chars` caps the page text returned, including across `--find` passages. Headers, notes,
+and added `…` omission markers are extra.
+
 **`--find TEXT`** splits the page into blocks at blank lines (a paragraph, list, table or code
 block) and prints every block containing TEXT (plain text, case-insensitive), each labeled with
 its offset and the nearest heading or PDF page marker. Matches are counted per block, not per
 occurrence. Blocks are added in page order until `--max-chars` is used up; the header says how many
 matched and how many are shown. A single block longer than the limit is cut to a window around
-the match.
+the match, with `…` marking omitted text. The whole match is kept when it fits within the limit.
 
 **Cache:** results are kept for an hour in `~/.cache/agent-web` (200 MB, oldest removed first), so
 `--offset` and `--find` on the same page don't download it again; `--refresh` skips it. Error,

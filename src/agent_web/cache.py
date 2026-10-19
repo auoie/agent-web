@@ -41,7 +41,7 @@ from agent_web.model import (
 )
 
 # Bump whenever conversion output changes, so results from older converters become misses.
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 
 
 def url_key(url: str, variant: str = "") -> str:

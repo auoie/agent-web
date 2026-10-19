@@ -17,7 +17,10 @@ SEARCH_QUOTING_HINT = (
 )
 
 DESCRIPTION = """\
-Search the web and read pages verbatim: no model summarizes anything in between.
+Search the web and read source text without an intermediate AI summary.
+
+HTML becomes Markdown; PDF text is reconstructed from page layout. Read Note: lines
+for detected omissions and conversion problems, and use --offset to continue long output.
 
   web search 'QUERY' [-n 10]      Google results: title, URL, snippet
   web fetch URL [--find TEXT]     the page's own text (HTML -> markdown, PDF -> text)
@@ -58,7 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument(
         "--offset", type=int, default=0, help="character position to start from (long pages)"
     )
-    fetch.add_argument("--max-chars", type=int, default=None, help="characters to print")
+    fetch.add_argument(
+        "--max-chars",
+        type=int,
+        default=None,
+        help="maximum page-text characters (metadata and omission markers are extra)",
+    )
     fetch.add_argument("--find", metavar="TEXT", help="print only passages containing TEXT")
     fetch.add_argument("--refresh", action="store_true", help="ignore the cache")
     fetch.add_argument(

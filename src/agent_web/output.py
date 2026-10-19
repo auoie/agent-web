@@ -164,7 +164,7 @@ def _window(block: str, offset: int, needle: str, limit: int) -> tuple[int, str]
     if len(block) <= limit:
         return offset, block
     hit = max(0, block.lower().find(needle))
-    start = max(0, min(hit - limit // 2, len(block) - limit))
+    start = max(0, min(hit - max(0, limit - len(needle)) // 2, len(block) - limit))
     end = start + limit
     text = ("…" if start else "") + block[start:end] + ("…" if end < len(block) else "")
     return offset + start, text
@@ -190,7 +190,7 @@ def find_passages(text: str, needle: str, limit_chars: int) -> tuple[list[Passag
         room = limit_chars - used
         if passages and len(block) > room:
             continue
-        offset, shown = _window(block, match.start(), lowered, max(room, 200))
+        offset, shown = _window(block, match.start(), lowered, room)
         passages.append(Passage(offset=offset, context=context, text=shown))
         used += len(shown)
     return passages, total

@@ -1,7 +1,7 @@
 [project]
 name = "agent-web"
 version = "0.1.0"
-description = "Verbatim web search and page fetching for AI coding agents: a CLI and a skill"
+description = "Web search and source text for AI coding agents, without intermediate AI summaries"
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]

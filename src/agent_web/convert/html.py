@@ -193,6 +193,19 @@ def _tidy_same_page_links(doc: lxml.html.HtmlElement, page_url: str) -> None:
             link.set("href", href[len(page) :])
 
 
+def _inline_heading_wrappers(doc: lxml.html.HtmlElement) -> None:
+    """Keep layout divs inside headings from splitting their text into separate Pandoc blocks."""
+    for heading in doc.iter("h1", "h2", "h3", "h4", "h5", "h6"):
+        for wrapper in list(heading.iterdescendants("div")):
+            if not isinstance(wrapper, lxml.html.HtmlElement):
+                continue
+            # Hidden text has already been labeled. Keep inline children and a space at each
+            # former block boundary so unwrapping doesn't join neighboring words.
+            wrapper.text = " " + (wrapper.text or "")
+            wrapper.tail = " " + (wrapper.tail or "")
+            wrapper.drop_tag()
+
+
 def _is_hidden(element: lxml.html.HtmlElement) -> bool:
     if element.get("hidden") is not None:
         return True
@@ -310,6 +323,7 @@ def prepare(html_text: str, base_url: str, whole_page: bool = False) -> Prepared
         # Only labels inside <main> reach the output.
         hidden_count = sum(1 for e in labeled if e is mains[0] or mains[0] in e.iterancestors())
 
+    _inline_heading_wrappers(doc)
     return Prepared(
         html=lxml.html.tostring(doc, encoding="unicode"),
         title=title,

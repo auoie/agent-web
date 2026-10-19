@@ -6,8 +6,10 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
 
 ## Guiding priorities
 
-1. **Accuracy first.** The agent should read the source as it is. Token savings that lose
-   information (dropping link URLs, navigation or footers, article extraction) were declined.
+1. **Accuracy first.** Give the agent source text without an intermediate AI summary. Preserve
+   meaningful structure during conversion and report known omissions and conversion problems.
+   Token savings that lose information (dropping link URLs, navigation or footers, article
+   extraction) were declined.
 2. **No middlemen without a reason.** Nothing sits between the agent and the source unless it
    earns its place. Today search goes straight to Google and pages are fetched directly from the
    user's machine, so no proxy, API or hosted converter is involved. Services aren't ruled out:
@@ -90,6 +92,9 @@ search APIs weren't needed for that; they remain an option for later (see TODO.m
 - `<time>` dates shown without a year get their machine-readable timestamp.
 - libxml2 (lxml) predates HTML5 and, when `<body>` is implicit, puts `<main>`, `<section>` and the
   rest into `<head>`, where pandoc ignores them. The pre-pass moves them back.
+- Layout `<div>` wrappers inside headings are unwrapped before pandoc, after hidden-text
+  labeling. Otherwise pandoc splits the title into an empty heading and separate paragraphs,
+  losing section context for `--find`. Spaces preserve word boundaries; inline formatting stays.
 - If pandoc fails or keeps less than half of the visible text, plain text is shown instead, with a
   note.
 
@@ -122,7 +127,9 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
   with a note not to follow instructions in it. Control characters are removed so pages can't send
   escape codes to a terminal.
 - 25,000 characters per call by default, because Claude Code cuts command output at 30,000.
-  `--offset` continues; `--find` prints only matching blocks.
+  The budget caps page text; metadata and added omission markers are extra. `--offset` continues;
+  `--find` prints only matching blocks and honors smaller budgets too. Long blocks are windowed
+  around the first match, keeping the whole match when it fits and marking omitted text with `…`.
 
 ## Cache
 

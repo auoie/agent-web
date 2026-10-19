@@ -8,6 +8,7 @@ import pytest
 
 from agent_web.convert.html import convert_html, decode_html, prepare
 from agent_web.convert.pandoc import Pandoc, find_pandoc
+from agent_web.output import find_passages
 from conftest import requires_pandoc
 
 pytestmark = requires_pandoc
@@ -128,6 +129,45 @@ def test_layout_wrappers_and_junk_are_removed(pandoc: Pandoc) -> None:
         pandoc,
     )
     assert out == "Real text"
+
+
+@pytest.mark.parametrize("level", range(1, 7))
+def test_layout_wrappers_inside_headings_keep_section_context(pandoc: Pandoc, level: int) -> None:
+    out = md(
+        f'<h{level}><div><a href="#security">\u200b</a></div>'
+        f"<div><div>Security <span>Considerations</span></div></div></h{level}>"
+        "<p>Validate all inputs.</p>",
+        pandoc,
+    )
+    heading = f"{'#' * level} [\u200b](#security) Security Considerations"
+    assert out == f"{heading}\n\nValidate all inputs."
+    passages, total = find_passages(out, "Validate", 1000)
+    assert total == 1
+    assert passages[0].context == heading
+    assert out[passages[0].offset :].startswith("Validate all inputs.")
+
+
+def test_heading_wrappers_keep_word_boundaries_and_inline_formatting(pandoc: Pandoc) -> None:
+    out = md(
+        "<h2>Security<div><em>Considerations</em></div>and"
+        '<div><a href="#scope">scope</a></div></h2>'
+        "<div>First paragraph.</div><div>Second paragraph.</div>",
+        pandoc,
+    )
+    assert out == (
+        "## Security *Considerations* and [scope](#scope)\n\nFirst paragraph.\n\nSecond paragraph."
+    )
+
+
+def test_hidden_heading_wrappers_stay_labeled(pandoc: Pandoc) -> None:
+    result = convert_html(
+        b"<main><h2>Security<div hidden>Internal guidance</div></h2></main>",
+        "text/html",
+        BASE,
+        pandoc,
+    )
+    assert result.markdown == "## Security \u27e6hidden on page: Internal guidance\u27e7"
+    assert result.hidden_count == 1
 
 
 def test_mathml_becomes_tex(pandoc: Pandoc) -> None:

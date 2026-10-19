@@ -4,6 +4,8 @@ import json
 import shlex
 from dataclasses import replace
 
+import pytest
+
 from agent_web.failures import Captcha
 from agent_web.model import (
     BinaryFile,
@@ -154,6 +156,46 @@ def test_find_output() -> None:
     assert "beta gamma" in out
     assert "gamma ray" in out
     assert "alpha" not in out.split("<untrusted-web-content-test>")[1]
+
+
+@pytest.mark.parametrize("budget", [1, 6, 50, 199, 200, 1000])
+@pytest.mark.parametrize("position", [0, 5000, 10_000])
+def test_find_small_budgets_keep_source_windows_and_offsets(budget: int, position: int) -> None:
+    text = "x" * position + "NEEDLE" + "y" * (10_000 - position)
+    passages, total = find_passages(text, "needle", budget)
+    assert total == 1
+    assert len(passages) == 1
+    passage = passages[0]
+    excerpt = passage.text.strip("\u2026")
+    assert 0 < len(excerpt) <= budget
+    assert excerpt == text[passage.offset : passage.offset + len(excerpt)]
+    assert "N" in excerpt
+    if budget >= len("NEEDLE"):
+        assert "NEEDLE" in excerpt
+    assert passage.text.startswith("\u2026") == (passage.offset > 0)
+    assert passage.text.endswith("\u2026") == (passage.offset + len(excerpt) < len(text))
+
+
+def test_find_multiple_matches_share_budget_and_report_omissions() -> None:
+    text = "needle one\n\nneedle two\n\nneedle three"
+    passages, total = find_passages(text, "needle", 20)
+    assert total == 3
+    assert [p.text for p in passages] == ["needle one", "needle two"]
+    assert sum(len(p.text) for p in passages) == 20
+    out = render_fetch(html_result(text), offset=0, max_chars=20, find="needle")
+    assert "Matches for 'needle': 3 passage(s), showing 2" in out
+    assert "Read around a match with:" in out
+
+
+def test_find_json_small_budget_marks_truncation() -> None:
+    text = "x" * 500 + "NEEDLE" + "y" * 500
+    data = json.loads(fetch_json(html_result(text), offset=0, max_chars=50, find="needle"))
+    passage = data["passages"][0]
+    assert data["matches"] == 1
+    assert passage["text"].startswith("\u2026")
+    assert passage["text"].endswith("\u2026")
+    assert len(passage["text"].strip("\u2026")) == 50
+    assert "NEEDLE" in passage["text"]
 
 
 def test_binary_body_and_pdf_kind() -> None:
