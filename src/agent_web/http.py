@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
-from urllib.parse import urljoin
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urljoin, urlsplit
 
 from agent_web.cookies import CookieSource
 from agent_web.failures import (
@@ -16,7 +17,7 @@ from agent_web.failures import (
     TooLarge,
     TooManyRedirects,
 )
-from agent_web.urls import check_public, validate_url
+from agent_web.urls import public_addresses, validate_url
 
 if TYPE_CHECKING:
     from curl_cffi.requests import Response
@@ -62,10 +63,12 @@ def download(
 ) -> HttpResponse | DownloadFailure:
     """GET `url`, following redirects ourselves so every hop gets its own checks.
 
-    Each hop is validated (scheme, credentials, private addresses) and gets cookies only if
-    `cookie_source` returns some for that exact URL, so a redirect never carries cookies to
-    another site. Bodies larger than `max_bytes` are refused.
+    Each hop is validated (scheme, credentials, private addresses, with the connection pinned to
+    the checked addresses) and gets cookies only if `cookie_source` returns some for that exact
+    URL, so a redirect never carries cookies to another site. Bodies larger than `max_bytes` are
+    refused.
     """
+    from curl_cffi import CurlOpt
     from curl_cffi import requests as curl_requests
 
     current = validate_url(url)
@@ -73,18 +76,23 @@ def download(
         return current
     redirects: list[str] = []
     cookies_sent = False
-    with curl_requests.Session[curl_requests.Response]() as session:
-        for _ in range(MAX_REDIRECTS + 1):
-            if (private := check_public(current, allow_private)) is not None:
-                return private
-            cookies: dict[str, str] = {}
-            if cookie_source is not None:
-                found = cookie_source.for_url(current)
-                if isinstance(found, CookieReadFailure):
-                    return found
-                cookies = found
-            cookies_sent = cookies_sent or bool(cookies)
-            target = impersonate_with_cookies if cookies else impersonate_anonymous
+    for _ in range(MAX_REDIRECTS + 1):
+        options: dict[CurlOpt, Any] = {}
+        if not allow_private:
+            addresses = public_addresses(current)
+            if isinstance(addresses, PrivateAddress | NetworkFailure):
+                return addresses
+            if pin := resolve_pin(current, addresses):
+                options[CurlOpt.RESOLVE] = [pin]
+        cookies: dict[str, str] = {}
+        if cookie_source is not None:
+            found = cookie_source.for_url(current)
+            if isinstance(found, CookieReadFailure):
+                return found
+            cookies = found
+        cookies_sent = cookies_sent or bool(cookies)
+        target = impersonate_with_cookies if cookies else impersonate_anonymous
+        with curl_requests.Session[curl_requests.Response](curl_options=options) as session:
             try:
                 response = session.get(
                     current,
@@ -112,18 +120,32 @@ def download(
                 return NetworkFailure(current, _short(e))
             finally:
                 response.close()
-            if isinstance(body, _Oversized):
-                return TooLarge(current, max_bytes)
-            return HttpResponse(
-                url=current,
-                status=response.status_code,
-                reason=response.reason or "",
-                headers={k.lower(): v for k, v in response.headers.items() if v is not None},
-                content=body,
-                redirects=tuple(redirects),
-                cookies_sent=cookies_sent,
-            )
+        if isinstance(body, _Oversized):
+            return TooLarge(current, max_bytes)
+        return HttpResponse(
+            url=current,
+            status=response.status_code,
+            reason=response.reason or "",
+            headers={k.lower(): v for k, v in response.headers.items() if v is not None},
+            content=body,
+            redirects=tuple(redirects),
+            cookies_sent=cookies_sent,
+        )
     return TooManyRedirects(url, MAX_REDIRECTS)
+
+
+def resolve_pin(url: str, addresses: tuple[str, ...]) -> str | None:
+    """A curl RESOLVE entry (`host:port:addr,…`) that makes curl connect to `addresses` instead of
+    looking the host up again. None for IP-literal hosts, which curl doesn't look up."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+        joined = ",".join(f"[{a}]" if ":" in a else a for a in addresses)
+        return f"{host}:{port}:{joined}"
+    return None
 
 
 def _read_limited(response: Response, max_bytes: int) -> bytes | _Oversized:

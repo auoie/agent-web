@@ -14,7 +14,8 @@ lossy conversion.
 - `web search "query" [-n 10]`: Google results (title, URL, snippet). Google operators work
   (`site:`, `-site:`, quotes, `filetype:pdf`).
 - `web fetch URL`: the page's own text. HTML becomes markdown, PDFs get `--- Page N ---` markers,
-  Reddit threads come out as the post plus a numbered comment tree.
+  Reddit threads come out as the post plus a numbered comment tree, and GitHub file links
+  (`github.com/…/blob/…`) return the raw file.
   - `--find TEXT`: only the passages containing TEXT, with their offsets. Use this first on long
     pages and PDFs.
   - `--offset N`: continue reading from character N (the output tells you the next offset).

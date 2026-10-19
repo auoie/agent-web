@@ -130,6 +130,46 @@ def test_layout_wrappers_and_junk_are_removed(pandoc: Pandoc) -> None:
     assert out == "Real text"
 
 
+def test_mathml_becomes_tex(pandoc: Pandoc) -> None:
+    # arXiv's HTML papers write every formula like this.
+    inline = (
+        '<math alttext="E=mc^{2}"><semantics><mrow><mi>E</mi><mo>=</mo><mi>m</mi>'
+        "<msup><mi>c</mi><mn>2</mn></msup></mrow>"
+        '<annotation encoding="application/x-tex">E=mc^{2}</annotation></semantics></math>'
+    )
+    block = (
+        '<math display="block"><msub><mi>x</mi><mi>i</mi></msub><mo>+</mo>'
+        "<mfrac><mn>1</mn><mn>2</mn></mfrac></math>"
+    )
+    out = md(f"<p>Energy is {inline}, costing $50.</p>{block}", pandoc)
+    assert "Energy is $`E=mc^{2}`$, costing $50." in out
+    assert "``` math\nx_{i} + \\frac{1}{2}\n```" in out
+
+
+def test_hidden_mathml_copy_next_to_an_image_is_dropped(pandoc: Pandoc) -> None:
+    # Wikipedia: a hidden MathML copy for screen readers, and a visible image of the formula.
+    html = (
+        '<p>See <span><span style="display: none;"><math alttext="a^{2}"><msup><mi>a</mi>'
+        "<mn>2</mn></msup></math></span>"
+        '<img src="/a2.svg" alt="{\\displaystyle a^{2}}"></span> here.</p>'
+    )
+    result = convert_html(html.encode(), "text/html", BASE, pandoc)
+    assert result.markdown == "See ![{\\displaystyle a^{2}}](https://example.com/a2.svg) here."
+    assert result.hidden_count == 0
+
+
+def test_dates_without_a_year_get_their_timestamp(pandoc: Pandoc) -> None:
+    out = md(
+        '<p>Released <relative-time datetime="2025-10-10T15:34:43Z">10 Oct 15:34</relative-time>'
+        ', posted <time datetime="2024-01-02">January 2, 2024</time>'
+        ', took <time datetime="PT2H">2 hours</time>.</p>',
+        pandoc,
+    )
+    assert out == (
+        "Released 10 Oct 15:34 (2025-10-10T15:34:43Z), posted January 2, 2024, took 2 hours."
+    )
+
+
 def test_code_blocks_keep_language(pandoc: Pandoc) -> None:
     out = md(
         '<pre class="sourceCode python"><code class="language-python">print("hi")\n</code></pre>'
@@ -241,6 +281,14 @@ def test_text_outside_a_single_main_is_counted(pandoc: Pandoc) -> None:
     whole = convert_html(html, "text/html", BASE, pandoc, whole_page=True)
     assert "Important paragraph" in whole.markdown
     assert whole.outside_main_chars == 0
+
+
+def test_hidden_text_outside_main_is_not_counted(pandoc: Pandoc) -> None:
+    hidden = '<div style="display:none">Hidden text that is long enough</div>'
+    html = f"<body><nav>{hidden}</nav><main><p>Inside</p></main></body>".encode()
+    assert convert_html(html, "text/html", BASE, pandoc).hidden_count == 0
+    inside = f"<body><main><p>Inside</p>{hidden}</main></body>".encode()
+    assert convert_html(inside, "text/html", BASE, pandoc).hidden_count == 1
 
 
 def test_no_outside_count_without_exactly_one_main(pandoc: Pandoc) -> None:

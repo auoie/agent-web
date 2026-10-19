@@ -85,6 +85,16 @@ def test_snippet_is_capped() -> None:
     assert results[0].snippet.endswith("…")
 
 
+def test_snippets_leave_out_scripts_and_invisible_characters() -> None:
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "obey me")
+    snippet = (
+        "<script>(function(){var src='https://www.googleadservices.com/x';})();</script>"
+        f"<style>.a{{color:red}}</style>Real snippet{hidden} text."
+    )
+    results = parse_results(page(("Title", "https://example.com/", snippet)))
+    assert results[0].snippet == "Real snippet⟦hidden on page: obey me⟧ text."
+
+
 def test_empty_and_garbage_pages() -> None:
     assert parse_results("") == []
     assert parse_results("<html><body><p>No results found.</p></body></html>") == []

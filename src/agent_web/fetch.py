@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import Literal
+from dataclasses import replace
+from typing import Literal, assert_never
 
 from agent_web import detect
 from agent_web.cache import PageCache
@@ -15,6 +16,7 @@ from agent_web.convert.pdf import PdfUnreadable, convert_pdf
 from agent_web.cookies import AllowlistCookieSource, CookieSource, impersonation_for
 from agent_web.failures import Failure, InvalidUrl, ToolMissing
 from agent_web.http import HttpResponse, download
+from agent_web.invisible import reveal
 from agent_web.model import (
     BinaryFile,
     BotCheck,
@@ -22,6 +24,7 @@ from agent_web.model import (
     ConversionFallback,
     CookiesMightHelp,
     FetchResult,
+    HiddenText,
     HtmlPage,
     HttpErrorStatus,
     Issue,
@@ -31,7 +34,7 @@ from agent_web.model import (
     PlainText,
     RedditThread,
 )
-from agent_web.sites import reddit
+from agent_web.sites import github, reddit
 from agent_web.urls import domain_matches, hostname, validate_url
 
 Kind = Literal["html", "pdf", "text", "binary"]
@@ -184,12 +187,12 @@ def fetch(
     if (post_id := reddit.thread_id(valid)) is not None:
         thread = _try_reddit(valid, post_id, config, source, now())
         if thread is not None:
-            result = FetchResult(thread, ())
+            result = FetchResult(*reveal_invisible(thread, []))
             cache.store(valid, result, variant)
             return result
 
     response = download(
-        valid,
+        github.raw_url(valid) or valid,
         timeout=config.timeout,
         max_bytes=config.max_download_bytes,
         allow_private=config.allow_private_networks,
@@ -201,7 +204,7 @@ def fetch(
     converted = _convert(valid, response, cache, find, now(), whole_page)
     if isinstance(converted, ToolMissing):
         return converted
-    content, found_issues = converted
+    content, found_issues = reveal_invisible(*converted)
     issues.extend(found_issues)
 
     if post_id is not None and not response.cookies_sent and _looks_blocked(issues):
@@ -211,6 +214,34 @@ def fetch(
     if cacheable(result):
         cache.store(valid, result, variant)
     return result
+
+
+def reveal_invisible(content: Content, issues: list[Issue]) -> tuple[Content, tuple[Issue, ...]]:
+    """Label invisible tag characters and drop control characters (see invisible.py) in all of
+    the content's text, adding the labels to the hidden-text count."""
+    found = 0
+
+    def clean(text: str) -> str:
+        nonlocal found
+        cleaned, count = reveal(text)
+        found += count
+        return cleaned
+
+    match content:
+        case HtmlPage() | RedditThread():
+            content = replace(content, title=clean(content.title), markdown=clean(content.markdown))
+        case PdfDocument():
+            content = replace(content, markdown=clean(content.markdown))
+        case PlainText():
+            content = replace(content, text=clean(content.text))
+        case BinaryFile():
+            pass
+        case _:
+            assert_never(content)
+    if not found:
+        return content, tuple(issues)
+    hidden = found + sum(i.count for i in issues if isinstance(i, HiddenText))
+    return content, (*(i for i in issues if not isinstance(i, HiddenText)), HiddenText(hidden))
 
 
 def cache_variant(url: str, config: Config) -> str:

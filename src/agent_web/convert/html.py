@@ -15,6 +15,7 @@ import lxml.html
 from lxml import etree
 
 from agent_web.convert.pandoc import Pandoc, PandocFailed, html_to_gfm
+from agent_web.invisible import HIDDEN_LABEL
 
 MAX_HTML_CHARS = 5_000_000
 _DROP_TAGS = (
@@ -22,7 +23,6 @@ _DROP_TAGS = (
     "style",
     "template",
     "svg",
-    "math",
     "iframe",
     "object",
     "embed",
@@ -63,7 +63,6 @@ _PERMALINK_TEXT = frozenset({"¶", "#", "§", "🔗", "link", "permalink", "anch
 # the text unlabeled instead of triggering a note.
 MIN_HIDDEN_CHARS = 12
 
-HIDDEN_LABEL = "hidden on page"
 NOSCRIPT_LABEL = "shown only without JavaScript"
 
 
@@ -214,6 +213,25 @@ def _wrap_text(element: lxml.html.HtmlElement, label: str) -> None:
         element.text += "⟧"
 
 
+def _complete_dates(doc: lxml.html.HtmlElement) -> None:
+    """Add the machine-readable timestamp to dates shown without a year.
+
+    `<time datetime="2025-10-10T15:34Z">10 Oct 15:34</time>` (GitHub writes dates like this and
+    lets a script finish them in the browser) becomes `10 Oct 15:34 (2025-10-10T15:34Z)`.
+    """
+    for element in doc.iter("time", "relative-time"):
+        if not isinstance(element, lxml.html.HtmlElement):
+            continue
+        stamp = (element.get("datetime") or "").strip()
+        if len(stamp) < 4 or not stamp[:4].isdigit() or stamp[:4] in element.text_content():
+            continue
+        children = list(element)
+        if children:
+            children[-1].tail = (children[-1].tail or "") + f" ({stamp})"
+        else:
+            element.text = (element.text or "") + f" ({stamp})"
+
+
 def _chars_outside(element: lxml.html.HtmlElement, skip: frozenset[lxml.html.HtmlElement]) -> int:
     """Visible text length under `element`, leaving out the `skip` subtrees and boilerplate tags."""
     total = len("".join((element.text or "").split()))
@@ -245,9 +263,19 @@ def prepare(html_text: str, base_url: str, whole_page: bool = False) -> Prepared
     _rescue_head_content(doc)
     doc.make_links_absolute(base_url, resolve_base_href=True, handle_failures="discard")
     _tidy_same_page_links(doc, base_url)
+    _complete_dates(doc)
 
     for node in list(doc.iter(*_DROP_TAGS, etree.Comment)):
         _remove(node)
+    # pandoc turns MathML into TeX math. Hidden MathML is a copy for screen readers next to a
+    # visible image of the formula (Wikipedia), so it goes instead of being labeled hidden.
+    for math in list(doc.iter("math")):
+        if any(
+            _is_hidden(e)
+            for e in (math, *math.iterancestors())
+            if isinstance(e, lxml.html.HtmlElement)
+        ):
+            _remove(math)
 
     labeled: set[lxml.html.HtmlElement] = set()
     for element in doc.iter():
@@ -270,6 +298,7 @@ def prepare(html_text: str, base_url: str, whole_page: bool = False) -> Prepared
     text_chars = _visible_text_chars(doc)
     outside_main = 0
     expected = text_chars
+    hidden_count = len(labeled)
     if whole_page:
         for main in mains:
             main.tag = "div"
@@ -278,11 +307,13 @@ def prepare(html_text: str, base_url: str, whole_page: bool = False) -> Prepared
         body = doc.find("body")
         if isinstance(body, lxml.html.HtmlElement):
             outside_main = _chars_outside(body, frozenset(mains))
+        # Only labels inside <main> reach the output.
+        hidden_count = sum(1 for e in labeled if e is mains[0] or mains[0] in e.iterancestors())
 
     return Prepared(
         html=lxml.html.tostring(doc, encoding="unicode"),
         title=title,
-        hidden_count=len(labeled),
+        hidden_count=hidden_count,
         text_chars=text_chars,
         outside_main_chars=outside_main,
         expected_chars=expected,

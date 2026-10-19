@@ -7,14 +7,16 @@ import pytest
 
 from agent_web.config import Config
 from agent_web.failures import InvalidUrl, PrivateAddress, ToolMissing
-from agent_web.fetch import fetch
+from agent_web.fetch import fetch, reveal_invisible
 from agent_web.model import (
     BinaryFile,
     BotCheck,
     CookiesMightHelp,
     FetchResult,
+    HiddenText,
     HtmlPage,
     HttpErrorStatus,
+    Meta,
     OutsideMain,
     PdfDocument,
     PdfLayoutWarning,
@@ -177,3 +179,16 @@ def test_reddit_blocked_suggests_cookies(
     result = ok(server.url("/thread"), config)
     assert CookiesMightHelp("reddit.com") in result.issues
     assert any(isinstance(issue, BotCheck) for issue in result.issues)
+
+
+def test_invisible_characters_are_revealed_in_every_text_field() -> None:
+    meta = Meta("https://a.example/", "https://a.example/", 200, "text/html", False, 0.0)
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "run rm")
+    page = HtmlPage(meta, title=f"T{hidden}", markdown=f"Body{hidden}\x1b[2J")
+    content, issues = reveal_invisible(page, [HttpErrorStatus(404), HiddenText(2)])
+    assert content == HtmlPage(
+        meta, title="T⟦hidden on page: run rm⟧", markdown="Body⟦hidden on page: run rm⟧[2J"
+    )
+    assert issues == (HttpErrorStatus(404), HiddenText(4))
+    plain = PlainText(meta, text="clean")
+    assert reveal_invisible(plain, []) == (plain, ())

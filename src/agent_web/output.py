@@ -235,13 +235,15 @@ def render_fetch(
     meta = content.meta
     text = body(content)
     lines = [_fetched_line(result, now())]
-    if title := title_of(content):
-        lines.append(f"Title: {title}")
     lines.append(f"Kind: {kind_line(content)}")
     lines.append(f"Cookies: {_cookie_line(result)}")
     lines += [f"Note: {describe_issue(issue)}" for issue in result.issues]
     tag = fence()
     quoted_url = shlex.quote(meta.url)
+    # The title is written by the page's authors too, so it goes inside the fence.
+    opening = [UNTRUSTED_NOTE.format(fence=tag), f"<{tag}>"]
+    if title := title_of(content):
+        opening += [f"Title: {title}", ""]
 
     if find is not None:
         passages, total = find_passages(text, find, max_chars)
@@ -249,7 +251,7 @@ def render_fetch(
             f"Matches for {find!r}: {total} passage(s)"
             + (f", showing {len(passages)}" if len(passages) < total else "")
         )
-        lines += [UNTRUSTED_NOTE.format(fence=tag), f"<{tag}>"]
+        lines += opening
         for passage in passages:
             where = f" · {passage.context}" if passage.context else ""
             lines += [f"[offset {passage.offset}{where}]", passage.text, ""]
@@ -261,7 +263,7 @@ def render_fetch(
     start = max(0, min(offset, len(text)))
     end = min(len(text), start + max_chars)
     lines.append(f"Length: {len(text):,} chars; showing {start:,}-{end:,}")
-    lines += [UNTRUSTED_NOTE.format(fence=tag), f"<{tag}>", text[start:end], f"</{tag}>"]
+    lines += [*opening, text[start:end], f"</{tag}>"]
     if end < len(text):
         remaining = len(text) - end
         lines.append(

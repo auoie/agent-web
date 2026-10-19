@@ -12,7 +12,7 @@ import pytest
 
 from agent_web.config import Config, load_config
 from agent_web.fetch import fetch
-from agent_web.model import FetchResult, HtmlPage, PdfDocument
+from agent_web.model import FetchResult, HtmlPage, PdfDocument, PlainText
 from agent_web.search.google import SearchResults, search
 
 pytestmark = pytest.mark.live
@@ -51,3 +51,17 @@ def test_arxiv_pdf_keeps_exponents(live_config: Config) -> None:
     assert isinstance(content, PdfDocument)
     assert content.pages >= 10
     assert "10<sup>19</sup>" in content.markdown
+
+
+def test_arxiv_html_keeps_formulas(live_config: Config) -> None:
+    result = fetch("https://arxiv.org/html/1706.03762", live_config)
+    assert isinstance(result, FetchResult), result
+    assert isinstance(result.content, HtmlPage)
+    assert r"\sqrt{d_{k}}" in result.content.markdown
+
+
+def test_github_file_page_gives_the_exact_file(live_config: Config) -> None:
+    result = fetch("https://github.com/psf/requests/blob/main/src/requests/api.py", live_config)
+    assert isinstance(result, FetchResult), result
+    assert isinstance(result.content, PlainText)
+    assert "\n    method: str," in result.content.text  # indentation intact

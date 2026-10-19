@@ -36,6 +36,7 @@ from agent_web.failures import (
     NotSignedIn,
 )
 from agent_web.http import DownloadFailure, HttpResponse, download
+from agent_web.invisible import reveal
 from agent_web.urls import domain_matches, normalize
 
 SEARCH_URL = "https://www.google.com/search"
@@ -156,6 +157,9 @@ def parse_results(html_text: str) -> list[SearchResult]:
     doc = parse_document(html_text)
     if doc is None:
         return []
+    for node in list(doc.iter("script", "style", "noscript")):
+        if isinstance(node, lxml.html.HtmlElement):
+            node.drop_tree()  # keeps the text that follows the element
     results: list[SearchResult] = []
     seen: set[str] = set()
     for link in doc.iter("a"):
@@ -173,7 +177,8 @@ def parse_results(html_text: str) -> list[SearchResult]:
         if not title:
             continue
         seen.add(key)
-        results.append(SearchResult(title=title, url=url, snippet=_snippet(_container(link), link)))
+        snippet = _snippet(_container(link), link)
+        results.append(SearchResult(title=reveal(title)[0], url=url, snippet=reveal(snippet)[0]))
     return results
 
 

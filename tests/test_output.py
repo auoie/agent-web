@@ -51,9 +51,13 @@ def test_window_and_continuation_command() -> None:
     out = render_fetch(html_result("0123456789" * 10), offset=20, max_chars=30, fence=fixed_fence)
     assert "showing 20-50" in out
     assert (
-        "<untrusted-web-content-test>\n" + ("0123456789" * 3) + "\n</untrusted-web-content-test>"
+        "<untrusted-web-content-test>\nTitle: T\n\n"
+        + ("0123456789" * 3)
+        + "\n</untrusted-web-content-test>"
         in out
     )
+    # The page's title is page-authored text, so it never appears outside the fence.
+    assert out.index("Title: T") > out.index("<untrusted-web-content-test>")
     continuation = out.splitlines()[-1]
     assert (
         continuation == f"[50 more chars. Continue with: web fetch {shlex.quote(URL)} --offset 50]"

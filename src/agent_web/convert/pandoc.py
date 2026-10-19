@@ -88,6 +88,7 @@ def html_to_gfm(pandoc: Pandoc, html: str, timeout: float = 120) -> str | Pandoc
         "--from=html",
         "--to=gfm-tex_math_dollars",
         "--wrap=none",
+        "--sandbox",  # no file or network access while reading untrusted HTML
         f"--lua-filter={LUA_FILTER}",
     ]
     try:

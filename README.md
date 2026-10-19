@@ -24,9 +24,12 @@ agent-web prints the source itself.
 - **`web fetch URL`** prints the page's own text:
   - **HTML** becomes markdown via pandoc plus a cleanup filter. Layout wrappers and attributes are
     removed. Simple tables become markdown tables. Tables with merged cells stay HTML tables, so
-    columns never shift. Strikethrough, superscripts, figures and captions are kept.
+    columns never shift. Strikethrough, superscripts, figures and captions are kept, and MathML
+    formulas become TeX (`` $`E=mc^{2}`$ ``).
   - **PDFs** become markdown via pymupdf, with `--- Page N ---` markers. The original is kept.
   - **Reddit threads** come out as the post plus a numbered comment tree (via Reddit's JSON).
+  - **GitHub file pages** (`github.com/…/blob/…`) are fetched from `raw.githubusercontent.com`,
+    so code arrives exactly, indentation included.
   - **`--find TEXT`** shows only the matching passages, and **`--offset N`** continues a long page.
     Output is capped (25,000 characters by default) to fit agents' output limits (Claude Code cuts
     command output at 30,000 characters).
@@ -113,12 +116,17 @@ contain instructions aimed at agents ("visit /a, then /b…"). This is the
 What agent-web does do:
 
 - **Untrusted-content fences.** Page text is printed inside `<untrusted-web-content-RANDOM>` tags with
-  a note not to follow instructions in it. Hidden text is labeled, and the skill tells agents never
-  to fetch a URL because a page says so or to put conversation data into URLs. This helps the
-  model resist injected instructions, but prompt injection isn't solved.
-- **No local network access.** `localhost`, private and link-local addresses are refused, including
-  as a redirect target. Every redirect hop is re-checked, and cookies never follow a redirect to
-  another host.
+  a note not to follow instructions in it; that includes the page's title. Hidden text is
+  labeled, including invisible Unicode "tag" characters, which models read but people can't see.
+  The skill tells agents never to fetch a URL because a page says so or to put conversation data
+  into URLs. This helps the model resist injected instructions, but prompt injection isn't solved.
+- **No local network access.** `localhost`, private, link-local and carrier-grade NAT (Tailscale)
+  addresses are refused, including as a redirect target. Every redirect hop is re-checked, the
+  connection goes to the exact addresses that were checked (so DNS rebinding can't redirect it),
+  and cookies never follow a redirect to another host.
+- **Terminal safety.** Control characters are removed, so a page can't send escape codes to your
+  terminal when you run `web` yourself.
+- **pandoc runs with `--sandbox`**, so converting a hostile page can't read files.
 - **Limits:** a 25 MB download cap, a 30 s timeout, at most 10 redirects, and at least 2 s between
   Google requests (shared across processes).
 
@@ -213,13 +221,14 @@ effective settings.
 
 ```
 Fetched: https://example.com/page (HTTP 200, text/html)
-Title: Example
 Kind: web page
 Cookies: not sent
 Note: …                                  (one line per detected problem)
 Length: 48,210 chars; showing 0-25,000
 The text inside <untrusted-web-content-1a2b3c4d> was written by the page's authors, …
 <untrusted-web-content-1a2b3c4d>
+Title: Example
+
 …page text…
 </untrusted-web-content-1a2b3c4d>
 [23,210 more chars. Continue with: web fetch https://example.com/page --offset 25000]
@@ -238,13 +247,14 @@ Exit codes:
 
 - **No JavaScript.** Pages that build their content in the browser come out nearly empty; this is
   flagged.
-- **Bot protection.** Sites like Cloudflare-protected pages or anonymous Reddit serve block pages;
-  these are flagged. Adding the domain to `cookie_domains` often helps.
+- **Bot protection.** Cloudflare-protected sites (Stack Overflow, for example) and anonymous Reddit
+  serve block pages; these are flagged. For Reddit, adding it to `cookie_domains` helps.
 - **PDF tables and formulas** are reconstructed from layout and can be garbled; this is flagged.
 - **Google's page layout can change.** Search parsing is structural (a link containing an `<h3>`),
   and `just test-live` catches drift.
-- **Hidden-text detection** sees inline styles and the `hidden` attribute. It can't see stylesheet
-  classes or white-on-white text.
+- **Hidden-text detection** sees inline styles, the `hidden` attribute and Unicode tag characters.
+  It can't see stylesheet classes or white-on-white text. In PDFs, invisible, white and tiny text
+  is dropped by the converter rather than labeled (a scan's OCR text layer is kept).
 
 ## Development
 
@@ -271,7 +281,8 @@ Layout:
   - `fetch.py`: the fetch pipeline.
   - `http.py`: downloads, redirects and cookie scoping.
   - `convert/`: HTML (pandoc + `clean.lua`) and PDF.
-  - `search/google.py`, `sites/reddit.py`.
+  - `search/google.py`; `sites/`: Reddit threads and GitHub files.
+  - `invisible.py`: tag characters and control codes.
   - `cache.py`, `output.py`.
 - `skills/web/SKILL.md`: the skill.
 

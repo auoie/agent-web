@@ -6,7 +6,7 @@ import ipaddress
 import socket
 from urllib.parse import urlsplit, urlunsplit
 
-from agent_web.failures import InvalidUrl, PrivateAddress
+from agent_web.failures import InvalidUrl, NetworkFailure, PrivateAddress
 
 MAX_URL_LENGTH = 8192
 
@@ -34,33 +34,37 @@ def hostname(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
-def is_private_address(host: str) -> bool:
-    """True if the host is (or resolves to) a loopback, private, link-local or reserved address."""
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except OSError:
-        return False  # unresolvable: the HTTP layer reports the DNS error
-    for info in infos:
-        address = ipaddress.ip_address(info[4][0])
-        if (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_reserved
-            or address.is_multicast
-            or address.is_unspecified
-        ):
-            return True
-    return False
+def is_public_ip(address: str) -> bool:
+    """False for loopback, private, link-local, carrier-grade NAT (Tailscale), reserved and
+    multicast addresses."""
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    return ip.is_global and not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
 
 
-def check_public(url: str, allow_private: bool) -> PrivateAddress | None:
-    if allow_private:
-        return None
+def public_addresses(url: str) -> tuple[str, ...] | PrivateAddress | NetworkFailure:
+    """The addresses of the URL's host, provided every one of them is public.
+
+    The caller connects to exactly these addresses, so a second DNS answer pointing at a local
+    service (DNS rebinding) is never used.
+    """
     host = hostname(url)
-    if host == "localhost" or host.endswith(".localhost") or is_private_address(host):
+    if host == "localhost" or host.endswith(".localhost"):
         return PrivateAddress(host)
-    return None
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError as e:
+        return NetworkFailure(url, f"can't resolve {host} ({e})")
+    addresses = tuple(dict.fromkeys(str(info[4][0]) for info in infos))
+    if not addresses or not all(is_public_ip(a) for a in addresses):
+        return PrivateAddress(host)
+    return addresses
 
 
 def domain_matches(host: str, domain: str) -> bool:

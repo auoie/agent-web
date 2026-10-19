@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import socket
 from urllib.parse import urlsplit
+
+import pytest
 
 from agent_web.cookies import CookieSource
 from agent_web.failures import (
@@ -11,7 +14,7 @@ from agent_web.failures import (
     TooLarge,
     TooManyRedirects,
 )
-from agent_web.http import HttpResponse, download
+from agent_web.http import HttpResponse, download, resolve_pin
 from conftest import HTML_PAGE, Server
 
 MB = 1024 * 1024
@@ -104,6 +107,35 @@ def test_redirect_into_private_network_blocked(server: Server) -> None:
     # classic SSRF trick, so each hop is checked again.
     result = download(server.url("/redirect-cross"), timeout=5, max_bytes=MB, allow_private=False)
     assert isinstance(result, PrivateAddress)
+
+
+def test_connection_is_pinned_to_the_checked_address(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `pinned.invalid` doesn't exist in DNS, so reaching the test server proves curl connected to
+    # the address that was checked rather than looking the name up again (DNS rebinding).
+    real = socket.getaddrinfo
+
+    def resolve(host: str, port: int | None, **kwargs: int) -> object:
+        return real("127.0.0.1" if host == "pinned.invalid" else host, port, **kwargs)
+
+    def anything_is_public(address: str) -> bool:
+        return True
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr("agent_web.urls.is_public_ip", anything_is_public)
+    url = server.url("/html").replace("127.0.0.1", "pinned.invalid")
+    result = download(url, timeout=5, max_bytes=MB)
+    assert isinstance(result, HttpResponse), result
+    assert result.content == HTML_PAGE
+
+
+def test_resolve_pin() -> None:
+    assert resolve_pin("https://a.example/x", ("1.2.3.4", "2001:db8::1")) == (
+        "a.example:443:1.2.3.4,[2001:db8::1]"
+    )
+    assert resolve_pin("http://a.example:8080/", ("1.2.3.4",)) == "a.example:8080:1.2.3.4"
+    assert resolve_pin("http://93.184.215.14/", ("93.184.215.14",)) is None
 
 
 def test_invalid_url() -> None:

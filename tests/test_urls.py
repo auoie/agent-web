@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import socket
+
 import pytest
 
-from agent_web.failures import InvalidUrl, PrivateAddress
-from agent_web.urls import check_public, domain_matches, normalize, validate_url
+from agent_web.failures import InvalidUrl, NetworkFailure, PrivateAddress
+from agent_web.urls import domain_matches, normalize, public_addresses, validate_url
 
 
 @pytest.mark.parametrize(
@@ -86,12 +88,31 @@ def test_domain_matches(host: str, domain: str, expected: bool) -> None:
         "http://[::1]/",
         "http://169.254.169.254/latest/meta-data",
         "http://app.localhost/",
+        "http://100.100.100.100/",  # carrier-grade NAT: Tailscale's address range
+        "http://[::ffff:127.0.0.1]/",
+        "http://2130706433/",  # 127.0.0.1 written as one number
+        "http://0.0.0.0/",
     ],
 )
-def test_check_public_blocks_local_addresses(url: str) -> None:
-    assert isinstance(check_public(url, allow_private=False), PrivateAddress)
-    assert check_public(url, allow_private=True) is None
+def test_public_addresses_refuses_local_addresses(url: str) -> None:
+    assert isinstance(public_addresses(url), PrivateAddress)
 
 
-def test_check_public_allows_public_ip() -> None:
-    assert check_public("http://93.184.215.14/", allow_private=False) is None
+def test_public_addresses_returns_the_checked_addresses() -> None:
+    assert public_addresses("http://93.184.215.14/") == ("93.184.215.14",)
+
+
+def test_one_private_address_among_public_ones_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    def resolve(host: str, port: int | None, **kwargs: int) -> list[tuple[object, ...]]:
+        return [(2, 1, 6, "", (address, 0)) for address in ("93.184.215.14", "127.0.0.1")]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    assert public_addresses("http://mixed.example/") == PrivateAddress("mixed.example")
+
+
+def test_unresolvable_host_is_a_network_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise socket.gaierror("Name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail)
+    assert isinstance(public_addresses("http://nowhere.example/"), NetworkFailure)
