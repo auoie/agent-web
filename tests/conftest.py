@@ -15,13 +15,17 @@ import pytest
 from agent_web.config import Config
 
 FIXTURES = Path(__file__).parent / "fixtures"
+# The user's real home, for the opt-in live tests; every other test gets a temporary one.
+REAL_HOME = Path.home()
 
 requires_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc not installed")
 
 
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """No test reads the user's config or cache."""
+    """No test reads the user's config, cache or browser profiles (so none can start their
+    browser or reach Google)."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     for name in (

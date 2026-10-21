@@ -154,10 +154,10 @@ page doesn't say it.
   Google account, and requests are spaced 2 seconds apart, so they queue up. A long burst (dozens
   of searches in a few minutes, e.g. from several agents in parallel) can still make Google block
   searches for a while. Run a few, read the results, then refine.
-- **Retrying a blocked search.** After Google answers with a captcha or its JavaScript check,
-  `web search` pauses for 10 minutes for every agent and says so (exit code 4). Don't retry or
-  loop with `sleep`: retrying keeps the block going. Work with the pages you already found
-  (`web fetch` still works), or wait.
+- **Retrying a blocked search.** When Google blocks searches (a captcha, or a JavaScript check
+  agent-web couldn't get past), `web search` pauses for 10 minutes for every agent and says so
+  (exit code 4). Don't retry or loop with `sleep`: retrying keeps the block going. Work with the
+  pages you already found (`web fetch` still works), or wait.
 - **Retrying a blocked page.** If a Note says the page is a bot check or an error page, retrying
   rarely helps. Say the page couldn't be read, or tell the user about the cookie setting the Note
   mentions.

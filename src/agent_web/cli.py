@@ -176,7 +176,9 @@ def _doctor(config: Config, out: TextIO) -> int:
     from agent_web.convert.pandoc import find_pandoc
     from agent_web.cookies import load_browser_cookies
     from agent_web.failures import CookieReadFailure, ToolMissing
-    from agent_web.search.google import limiter_for, signed_in
+    from agent_web.search.google import signed_in
+    from agent_web.search.limiter import limiter_for
+    from agent_web.search.refresh import recent_refreshes
 
     problems = 0
     path = config_path()
@@ -209,6 +211,8 @@ def _doctor(config: Config, out: TextIO) -> int:
             f"with {paused.cause}",
             file=out,
         )
+    for line in recent_refreshes(config):
+        print(f"google:   refresh {line}", file=out)
     domains = ", ".join(config.cookie_domains) or "(none: every fetch is anonymous)"
     print(f"cookies:  sent on fetch to: {domains}", file=out)
     print(f"cache:    {config.cache_dir}", file=out)

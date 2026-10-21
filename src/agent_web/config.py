@@ -27,6 +27,9 @@ browser = "firefox"
 [search]
 # Minimum seconds between Google requests (protects your account from rate limits)
 min_interval_seconds = 2.0
+# When Google answers with its JavaScript check, run the check in a headless Firefox or LibreWolf
+# (with a throwaway copy of your Google cookies) and retry, instead of pausing searches
+browser_refresh = true
 
 [fetch]
 # Domains that receive your browser cookies when fetched (subdomains included).
@@ -70,6 +73,7 @@ class Config:
     browser: str = "firefox"
     cookie_file: Path | None = None
     search_min_interval: float = 2.0
+    browser_refresh: bool = True
     cookie_domains: tuple[str, ...] = ()
     timeout: float = 30.0
     max_download_bytes: int = 25 * 1024 * 1024
@@ -83,7 +87,7 @@ class Config:
 
 _SCHEMA: dict[str, frozenset[str]] = {
     "cookies": frozenset({"browser", "cookie_file"}),
-    "search": frozenset({"min_interval_seconds"}),
+    "search": frozenset({"min_interval_seconds", "browser_refresh"}),
     "fetch": frozenset(
         {"cookie_domains", "timeout_seconds", "max_download_mb", "allow_private_networks"}
     ),
@@ -122,6 +126,15 @@ def _string(table: Mapping[str, Any], key: str, where: str) -> str | None:
     if not isinstance(value, str) or not value.strip():
         raise _Invalid(f"{where}.{key} must be a non-empty string")
     return value.strip()
+
+
+def _bool(table: Mapping[str, Any], key: str, where: str) -> bool | None:
+    if key not in table:
+        return None
+    value: object = table[key]
+    if not isinstance(value, bool):
+        raise _Invalid(f"{where}.{key} must be true or false")
+    return value
 
 
 def _domain(raw: object, key: str) -> str:
@@ -168,6 +181,8 @@ def _parse(data: Mapping[str, Any]) -> Config:
     search = _table(data, "search")
     if (interval := _number(search, "min_interval_seconds", "search", 0)) is not None:
         config = replace(config, search_min_interval=interval)
+    if (refresh := _bool(search, "browser_refresh", "search")) is not None:
+        config = replace(config, browser_refresh=refresh)
 
     fetch = _table(data, "fetch")
     if (cookie_domains := _domains(fetch, "cookie_domains")) is not None:
@@ -176,10 +191,7 @@ def _parse(data: Mapping[str, Any]) -> Config:
         config = replace(config, timeout=timeout)
     if (max_mb := _number(fetch, "max_download_mb", "fetch", 1)) is not None:
         config = replace(config, max_download_bytes=int(max_mb * 1024 * 1024))
-    if "allow_private_networks" in fetch:
-        allow: object = fetch["allow_private_networks"]
-        if not isinstance(allow, bool):
-            raise _Invalid("fetch.allow_private_networks must be true or false")
+    if (allow := _bool(fetch, "allow_private_networks", "fetch")) is not None:
         config = replace(config, allow_private_networks=allow)
 
     output = _table(data, "output")

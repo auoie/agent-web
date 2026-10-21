@@ -102,6 +102,10 @@ There are no middlemen and no proxies:
 - **Your model provider** sees what the agent reads, as with anything else in the conversation.
 - **Your browser cookies** are sent only to Google (for search) and to domains you explicitly list in
   `fetch.cookie_domains`. Every other site gets an anonymous request.
+- **Getting past Google's JavaScript check** (Firefox and LibreWolf only): agent-web copies your
+  Google cookies into a throwaway browser profile, which is deleted right after, and keeps the
+  few cookies the check sets in `~/.cache/agent-web/google-cookies.json` (readable only by you)
+  for at most 10 minutes.
 
 Searches use your Google account, so they appear in its search history.
 
@@ -139,9 +143,10 @@ What agent-web does do:
   terminal when you run `web` yourself.
 - **pandoc runs with `--sandbox`**, so converting a hostile page can't read files.
 - **Limits:** a 25 MB download cap, a 30 s timeout, at most 10 redirects, and at least 2 s between
-  Google requests (shared across processes). After Google answers with a captcha or its
-  JavaScript check, searches pause for 10 minutes for every process: retrying during a block
-  keeps it going.
+  Google requests (shared across processes). When Google answers with its JavaScript check, a
+  headless Firefox runs the check and the search is retried once (at most one such refresh a
+  minute). After a captcha, or a check the refresh doesn't get past, searches pause for 10
+  minutes for every process: retrying during a block keeps it going.
 
 Any other network command (`curl`, `wget`, a script) is the same channel, so the same warning applies
 to auto-approving shell commands in general.
@@ -152,7 +157,8 @@ to auto-approving shell commands in general.
 - [pandoc](https://pandoc.org/installing.html) ≥ 3.0 (`pacman -S pandoc-cli`, `brew install pandoc`),
   or install with the `bundled-pandoc` extra.
 - A browser signed in to Google (Firefox by default; Chrome, Chromium, Brave, Vivaldi, Edge, Opera
-  and LibreWolf also work). Linux or macOS.
+  and LibreWolf also work). Linux or macOS. Getting past Google's JavaScript check needs Firefox
+  or LibreWolf installed, since it runs them headless.
 
 ## Install
 
@@ -239,6 +245,7 @@ cookie_domains = ["reddit.com"]   # sites that get your browser session; default
 
 [search]
 min_interval_seconds = 2.0
+browser_refresh = true   # run Google's JavaScript check in headless Firefox, then retry
 ```
 
 Unknown keys are errors, so a typo can't silently fall back to a default. `web config` shows the

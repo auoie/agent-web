@@ -169,11 +169,11 @@ def describe(failure: Failure) -> str:
             return f"{service} shows a consent page: open it in your browser, accept, then retry"
         case JavaScriptWall(service):
             return (
-                f"{service} served its JavaScript check instead of results: it is limiting "
-                "searches, usually after many in a short time. Searches are paused for "
-                f"{SEARCH_PAUSE_MINUTES} minutes; retrying sooner keeps the block going. If it "
-                f"continues after that, the sign-in may have expired: open {service} in your "
-                "browser, search once, then retry"
+                f"{service} served its JavaScript check instead of results, and agent-web couldn't "
+                "get past it: it is limiting searches, usually after many in a short time. "
+                f"Searches are paused for {SEARCH_PAUSE_MINUTES} minutes; retrying sooner keeps "
+                f"the block going. If it continues after that, the sign-in may have expired: open "
+                f"{service} in your browser, search once, then retry"
             )
         case SearchPaused(service, cause, minutes_left):
             return (

@@ -14,13 +14,15 @@ from agent_web.config import Config, load_config
 from agent_web.fetch import fetch
 from agent_web.model import FetchResult, HtmlPage, PdfDocument, PlainText
 from agent_web.search.google import SearchResults, search
+from conftest import REAL_HOME
 
 pytestmark = pytest.mark.live
 
 
 @pytest.fixture
 def live_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))  # the real config
+    monkeypatch.setenv("HOME", str(REAL_HOME))  # the real browser profile, for the refresh
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(REAL_HOME / ".config"))  # the real config
     config = load_config()
     assert isinstance(config, Config), config
     return replace(config, cache_dir=tmp_path / "cache")

@@ -12,6 +12,7 @@ from agent_web.cookies import CookieSource
 from agent_web.failures import (
     Captcha,
     ConsentRequired,
+    Failure,
     JavaScriptWall,
     NetworkFailure,
     NotSignedIn,
@@ -20,14 +21,14 @@ from agent_web.failures import (
 from agent_web.http import DownloadFailure, HttpResponse
 from agent_web.search.google import (
     GoogleCookies,
-    Paused,
-    RateLimiter,
     SearchResults,
     classify_response,
     parse_results,
     search,
     search_url,
 )
+from agent_web.search.limiter import Paused, RateLimiter
+from agent_web.search.refresh import Refreshed
 from conftest import FIXTURES
 from test_cookies import cookie
 
@@ -239,6 +240,118 @@ def test_a_block_pauses_searches(config: Config, page: HttpResponse, cause: str)
     )
     assert isinstance(outcome, Captcha | JavaScriptWall)
     assert limiter.pauses == [(cause, 600)]
+
+
+class FakeRefresher:
+    def __init__(
+        self, result: Refreshed | Paused | str, stored: list[Cookie] | None = None
+    ) -> None:
+        self.result = result
+        self.stored = stored or []
+        self.calls: list[str] = []
+        self.lines: list[str] = []
+
+    def cookies(self) -> list[Cookie]:
+        return self.stored
+
+    def refresh(self, url: str, limiter: RateLimiter) -> Refreshed | Paused | str:
+        self.calls.append(url)
+        return self.result
+
+    def log(self, line: str) -> None:
+        self.lines.append(line)
+
+
+JS_CHECK = response('<a href="/httpservice/retry/enablejs">x</a>')
+SG_SS = cookie("SG_SS", "token", "www.google.com", secure=True)
+
+
+def refreshing_search(
+    config: Config, responses: list[HttpResponse], refresher: FakeRefresher, limiter: FakeLimiter
+) -> tuple[SearchResults | Failure, list[dict[str, str]]]:
+    """Search with downloads answered from `responses` in turn; also returns the cookies each
+    request carried."""
+    sent: list[dict[str, str]] = []
+
+    def downloader(url: str, *, cookie_source: CookieSource, **kwargs: object) -> HttpResponse:
+        found = cookie_source.for_url(url)
+        assert isinstance(found, dict)
+        sent.append(found)
+        return responses[len(sent) - 1]
+
+    outcome = search(
+        "q",
+        1,
+        config,
+        cookie_loader=signed_in_loader,
+        downloader=downloader,
+        limiter=limiter,
+        refresher=refresher,
+    )
+    return outcome, sent
+
+
+def test_a_refresh_gets_past_the_javascript_check(config: Config) -> None:
+    refresher = FakeRefresher(Refreshed([SG_SS], "headless firefox, 0.9 s"))
+    limiter = FakeLimiter()
+    outcome, sent = refreshing_search(
+        config, [JS_CHECK, response(numbered(0, 9))], refresher, limiter
+    )
+    assert isinstance(outcome, SearchResults)
+    assert len(outcome.results) == 9
+    assert "SG_SS" not in sent[0]
+    assert sent[1]["SG_SS"] == "token"  # the retry carries the refreshed cookie
+    assert limiter.pauses == []
+    assert refresher.lines == ["headless firefox, 0.9 s; the retry got results"]
+
+
+def test_a_refresh_that_doesnt_help_pauses(config: Config) -> None:
+    refresher = FakeRefresher(Refreshed([SG_SS], "headless firefox, 0.9 s"))
+    limiter = FakeLimiter()
+    outcome, _ = refreshing_search(config, [JS_CHECK, JS_CHECK], refresher, limiter)
+    assert outcome == JavaScriptWall("Google")
+    assert limiter.pauses == [("its JavaScript check", 600)]
+    assert refresher.lines == [
+        "headless firefox, 0.9 s; the retry got JavaScriptWall(service='Google')"
+    ]
+
+
+def test_a_failed_refresh_pauses(config: Config) -> None:
+    refresher = FakeRefresher("firefox isn't installed")
+    limiter = FakeLimiter()
+    outcome, sent = refreshing_search(config, [JS_CHECK], refresher, limiter)
+    assert outcome == JavaScriptWall("Google")
+    assert len(sent) == 1
+    assert limiter.pauses == [("its JavaScript check", 600)]
+    assert refresher.lines == ["refresh failed: firefox isn't installed"]
+
+
+def test_a_refresh_during_a_pause_reports_the_pause(config: Config) -> None:
+    refresher = FakeRefresher(Paused(120, "a captcha"))
+    limiter = FakeLimiter()
+    outcome, _ = refreshing_search(config, [JS_CHECK], refresher, limiter)
+    assert outcome == SearchPaused("Google", "a captcha", 2)
+    assert limiter.pauses == []
+
+
+def test_a_captcha_pauses_without_a_refresh(config: Config) -> None:
+    refresher = FakeRefresher(Refreshed([SG_SS], "unused"))
+    limiter = FakeLimiter()
+    sorry = response("", url="https://www.google.com/sorry/index")
+    outcome, _ = refreshing_search(config, [sorry], refresher, limiter)
+    assert outcome == Captcha("Google")
+    assert refresher.calls == []
+    assert limiter.pauses == [("a captcha", 600)]
+
+
+def test_refreshed_cookies_ride_along_on_later_searches(config: Config) -> None:
+    newer_sid = cookie("SID", "newer", ".google.com")
+    refresher = FakeRefresher("unused", stored=[SG_SS, newer_sid])
+    outcome, sent = refreshing_search(config, [response(numbered(0, 3))], refresher, FakeLimiter())
+    assert isinstance(outcome, SearchResults)
+    assert sent[0]["SG_SS"] == "token"
+    assert sent[0]["SID"] == "newer"  # the refreshed cookie replaces the browser's
+    assert refresher.calls == []
 
 
 def test_no_request_while_searches_are_paused(config: Config) -> None:

@@ -25,6 +25,11 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
   cookies or a fallback when Google shows a captcha or the browser isn't signed in. Queries would
   then go to that provider, and results should stay in the same title/URL/snippet format.
   Fetching would stay local.
+- **Refreshing Google's token before it runs out:** a browser gets a fresh `__Secure-STRP` (5
+  minutes) on every search, agent-web only after Google challenges it. If
+  `~/.cache/agent-web/google-refresh.log` shows a refresh on nearly every search during busy
+  periods, refresh ahead of time instead (one headless Firefox run every few minutes while agents
+  search).
 - **Pages that need JavaScript** are only flagged. The skill could point the agent to a browser
   tool as the next step.
 

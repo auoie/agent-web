@@ -68,6 +68,23 @@ search APIs weren't needed for that; they remain an option for later (see TODO.m
   twice with its `/sorry/` captcha, and the agents kept retrying for 17 minutes (some with
   `sleep 45`), almost all blocked. The old message blamed expired cookies, which sent agents
   into retry loops; the cookies were fine. A search 2.5 hours later worked.
+- **Google's JavaScript check is passed with a headless Firefox, then the search is retried**
+  (`search/refresh.py`). The check is a page of JavaScript that a browser runs to prove it is one;
+  agent-web can't run JavaScript, and reimplementing what it computes was ruled out (it is
+  Google's anti-automation code, and would break when Google changes it). Instead, Firefox runs it:
+  a throwaway profile holding only the user's Google cookies loads the blocked search with
+  `--headless --screenshot` (about 1-2 s) and gets the cookies the check sets: `SG_SS` (30 s) and
+  `__Secure-STRP` (5 min). Tested on a live block on 2026-10-21: a plain request got the check at
+  19:35:02, the refresh took 0.9 s, and the retry with its cookies at 19:35:07 got normal
+  results. Refreshed cookies are kept for at most 10 minutes (long-lived ones it touched, like
+  `SIDCC`, mustn't shadow newer ones from the user's browsing). At most one refresh a minute
+  across processes, under a lock; a search blocked sooner reuses that refresh's cookies, and a
+  retry that is still blocked pauses as before. Each refresh is logged
+  (`~/.cache/agent-web/google-refresh.log`, the last three in `web doctor`) to learn whether one
+  refresh clears a block for a while or Google wants one per search. Off with
+  `search.browser_refresh = false`. Chrome-family browsers aren't supported yet: they'd need their
+  own code (a headless Chrome, and Chrome encrypts cookie values). Not done (yet): refreshing
+  before the 5-minute `__Secure-STRP` runs out, which a browser does on every search.
 - **Each search is one request for one results page** (`--page N`, 1-5, default 1), and all of
   its 8-10 results are returned. The output ends with the command for the next page, like
   `web fetch`'s `--offset` hint. A result count (`-n`, removed without an alias) either made a

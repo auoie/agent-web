@@ -7,16 +7,12 @@ containing an <h3> is a result) rather than by Google's obfuscated class names.
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
-import json
 import math
 import re
-import time
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from http.cookiejar import Cookie
-from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 import lxml.html
@@ -41,7 +37,8 @@ from agent_web.failures import (
 )
 from agent_web.http import DownloadFailure, HttpResponse, download
 from agent_web.invisible import reveal
-from agent_web.jsonvalue import as_dict, get_float, get_str
+from agent_web.search.limiter import Paused, RateLimiter, limiter_for
+from agent_web.search.refresh import Refresher, refresher_for
 from agent_web.urls import domain_matches, normalize
 
 SEARCH_URL = "https://www.google.com/search"
@@ -227,98 +224,46 @@ def signed_in(cookies: Iterable[Cookie]) -> bool:
     )
 
 
-@dataclass
-class _LimiterState:
-    last: float = 0.0  # when the last request started
-    paused_until: float = 0.0
-    cause: str = ""
-
-
-def _parse_state(text: str) -> _LimiterState:
-    try:
-        data = as_dict(json.loads(text))
-    except ValueError:
-        data = None
-    if data is None:
-        try:
-            return _LimiterState(last=float(text.strip()))  # the older format: just `last`
-        except ValueError:
-            return _LimiterState()
-    return _LimiterState(
-        last=get_float(data, "last") or 0.0,
-        paused_until=get_float(data, "paused_until") or 0.0,
-        cause=get_str(data, "cause"),
-    )
-
-
-@dataclass(frozen=True)
-class Paused:
-    seconds_left: float
-    cause: str
-
-
-class RateLimiter:
-    """Keeps at least `min_interval` seconds between Google requests, and pauses searches after
-    Google blocks one, across processes: every agent on the machine uses one Google account."""
-
-    def __init__(
-        self,
-        path: Path,
-        min_interval: float,
-        now: Callable[[], float] = time.time,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        self.path = path
-        self.min_interval = min_interval
-        self._now = now
-        self._sleep = sleep
-
-    @contextlib.contextmanager
-    def _state(self) -> Generator[_LimiterState]:
-        """The shared state, read and written back under an exclusive lock (flock)."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a+", encoding="utf-8") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            handle.seek(0)
-            state = _parse_state(handle.read())
-            yield state
-            handle.seek(0)
-            handle.truncate()
-            handle.write(json.dumps(state.__dict__))
-
-    def wait(self) -> Paused | None:
-        """Wait until `min_interval` has passed since the last request and claim the next slot.
-        While searches are paused, return the pause instead, without waiting."""
-        with self._state() as state:
-            now = self._now()
-            if state.paused_until > now:
-                return Paused(state.paused_until - now, state.cause)
-            delay = state.last + self.min_interval - now
-            if delay > 0:
-                self._sleep(min(delay, self.min_interval))
-            state.last = self._now()
-        return None
-
-    def pause(self, cause: str, seconds: float) -> None:
-        with self._state() as state:
-            state.paused_until = self._now() + seconds
-            state.cause = cause
-
-    def paused(self) -> Paused | None:
-        with self._state() as state:
-            left = state.paused_until - self._now()
-            return Paused(left, state.cause) if left > 0 else None
-
-
-def limiter_for(config: Config) -> RateLimiter:
-    return RateLimiter(config.cache_dir / "google-last-request", config.search_min_interval)
-
-
 def search_url(query: str, page: int) -> str:
     params: dict[str, str | int] = {"q": query, "hl": "en"}
     if page:
         params["start"] = page * RESULTS_PER_PAGE
     return f"{SEARCH_URL}?{urlencode(params)}"
+
+
+def overlay(base: list[Cookie], extra: list[Cookie]) -> list[Cookie]:
+    """`base` with each cookie that `extra` also has replaced by the one from `extra`."""
+    replaced = {(c.domain, c.name, c.path) for c in extra}
+    return [c for c in base if (c.domain, c.name, c.path) not in replaced] + extra
+
+
+def _paused(paused: Paused) -> SearchPaused:
+    return SearchPaused(SERVICE, paused.cause, math.ceil(paused.seconds_left / 60))
+
+
+def _attempt(
+    url: str,
+    config: Config,
+    cookies: list[Cookie],
+    downloader: Downloader,
+    limiter: RateLimiter,
+) -> list[SearchResult] | Failure:
+    """One request to Google, in turn with every other process."""
+    if (paused := limiter.wait()) is not None:
+        return _paused(paused)
+    response = downloader(
+        url,
+        timeout=config.timeout,
+        max_bytes=config.max_download_bytes,
+        cookie_source=GoogleCookies(cookies),
+        impersonate_with_cookies=impersonation_for(config.browser),
+    )
+    if not isinstance(response, HttpResponse):
+        return response
+    html_text = decode_html(response.content, response.content_type)
+    found = parse_results(html_text)
+    problem = classify_response(response, html_text, found)
+    return found if problem is None else problem
 
 
 def search(
@@ -329,30 +274,41 @@ def search(
     cookie_loader: CookieLoader = load_browser_cookies,
     downloader: Downloader = download,
     limiter: RateLimiter | None = None,
+    refresher: Refresher | Literal["auto"] | None = "auto",
 ) -> SearchResults | Failure:
-    """The results on one Google results page (1 is the first): exactly one request."""
+    """The results on one Google results page (1 is the first): one request.
+
+    If Google answers with its JavaScript check, a headless browser runs the check (refresh.py)
+    and the search is retried once. A captcha, or a check the refresh doesn't get past, pauses
+    every process's searches for SEARCH_PAUSE_MINUTES.
+    """
     cookies = cookie_loader(config.browser, "google.com", config.cookie_file)
     if isinstance(cookies, CookieReadFailure):
         return cookies
     if not signed_in(cookies):
         return NotSignedIn(SERVICE, config.browser)
     limiter = limiter or limiter_for(config)
-    if (paused := limiter.wait()) is not None:
-        return SearchPaused(SERVICE, paused.cause, math.ceil(paused.seconds_left / 60))
-    response = downloader(
-        search_url(query, page - 1),
-        timeout=config.timeout,
-        max_bytes=config.max_download_bytes,
-        cookie_source=GoogleCookies(cookies),
-        impersonate_with_cookies=impersonation_for(config.browser),
-    )
-    if not isinstance(response, HttpResponse):
-        return response
-    html_text = decode_html(response.content, response.content_type)
-    found = parse_results(html_text)
-    if (problem := classify_response(response, html_text, found)) is not None:
-        if isinstance(problem, Captcha | JavaScriptWall):
-            cause = "a captcha" if isinstance(problem, Captcha) else "its JavaScript check"
-            limiter.pause(cause, SEARCH_PAUSE_MINUTES * 60)
-        return problem
-    return SearchResults(query, tuple(found), page)
+    if refresher == "auto":
+        refresher = refresher_for(config)
+    if refresher is not None:
+        cookies = overlay(cookies, refresher.cookies())
+    url = search_url(query, page - 1)
+    outcome = _attempt(url, config, cookies, downloader, limiter)
+    if isinstance(outcome, JavaScriptWall) and refresher is not None:
+        refreshed = refresher.refresh(url, limiter)
+        if isinstance(refreshed, Paused):
+            return _paused(refreshed)
+        if isinstance(refreshed, str):
+            refresher.log(f"refresh failed: {refreshed}")
+        else:
+            outcome = _attempt(
+                url, config, overlay(cookies, refreshed.cookies), downloader, limiter
+            )
+            result = "got results" if isinstance(outcome, list) else f"got {outcome}"
+            refresher.log(f"{refreshed.how}; the retry {result}")
+    if isinstance(outcome, Captcha | JavaScriptWall):
+        cause = "a captcha" if isinstance(outcome, Captcha) else "its JavaScript check"
+        limiter.pause(cause, SEARCH_PAUSE_MINUTES * 60)
+    if isinstance(outcome, list):
+        return SearchResults(query, tuple(outcome), page)
+    return outcome
