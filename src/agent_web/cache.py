@@ -45,7 +45,7 @@ from agent_web.model import (
 from agent_web.urls import hostname
 
 # Bump whenever conversion output changes, so results from older converters become misses.
-FORMAT_VERSION = 6
+FORMAT_VERSION = 7
 
 
 def url_key(url: str, variant: str = "") -> str:

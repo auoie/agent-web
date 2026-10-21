@@ -42,6 +42,10 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
   page text and using it safely. It used to require quoting every fact taken from a page, then
   quoting numbers and exact wording; agents (GPT-6.1 Sol, GLM 5.3) filled their answers with
   quotes. Citing and quoting are up to the user and their agent.
+- **The skill leaves the reading strategy to the agent.** It used to call reading a long page from
+  the top a mistake and push `--find`. Reading a whole page is right when all of it matters, and
+  `--find` only matches exact words, so an empty result can make an agent wrongly conclude a page
+  doesn't cover something. The skill now describes both ways and that limit.
 
 ## Search: Google with the user's browser cookies
 
@@ -129,13 +133,32 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
 - **Problems are flagged, never hidden.** `Note:` lines for HTTP errors, bot-check pages, pages that
   need JavaScript, nearly empty pages, scanned PDFs, hidden text and fallbacks, plus exit codes.
   There is no silent fallback to another source.
-- Page text (including the page's title) is printed inside an `<untrusted-web-content-RANDOM>` fence
-  with a note not to follow instructions in it. Control characters are removed so pages can't send
-  escape codes to a terminal.
+- **Untrusted blocks hold only what the page wrote.** The title, the text and each `--find`
+  passage get their own `<untrusted-web-content-RANDOM>` block (one random tag per output, so a
+  page can't close it), after one note not to follow instructions inside. Agent-web's labels
+  (`Title:`, `Length:`, `Passage 3 of 20, offset …`) stay outside, so the agent can tell them
+  apart from page text, and a page can't fake them. Passages used to share one block with
+  `[offset …]` labels inside it. The exceptions are agent-web's `⟦…⟧` labels and
+  `--- Page N ---` markers, which sit between pieces of page text. A passage's heading is page
+  text, so it opens the block, and only its offset goes in the label. The label gives the
+  passage's end offset too, so an agent can read on after it, not only before, and the offset of
+  each match (the first ten): a cut-down table's span is the whole table, so without them an agent
+  couldn't jump to the matching row. Matching is case-insensitive through a regex rather than
+  `lower()`, which changes the length of some strings (`"İ".lower()` is two characters) and would
+  shift the offsets. Control characters
+  are removed so pages can't send escape codes to a terminal.
+- **Skipped text is marked `⟦72 lines left out⟧` / `⟦2,831 characters left out⟧`,** not with a
+  bare `…`. Pages write `…` themselves, so a bare one couldn't be told apart from page text, and
+  the size says how much is missing. The `⟦⟧` brackets are the ones agent-web already uses for
+  `⟦hidden on page: …⟧` and `⟦image: …⟧`; pages almost never contain them.
 - 25,000 characters per call by default, because Claude Code cuts command output at 30,000.
-  The budget caps page text; metadata and added omission markers are extra. `--offset` continues;
-  `--find` prints only matching blocks and honors smaller budgets too. Long blocks are windowed
-  around the first match, keeping the whole match when it fits and marking omitted text with `…`.
+  The budget caps page text; metadata and `⟦… left out⟧` marks are extra. `--offset` continues;
+  `--find` prints only matching blocks and honors smaller budgets too. A table, list or code block
+  over 2,000 characters (or too big for the rest of the budget) shows its first line, a table's
+  `|---|` rule and its matching lines. Before that, a page's whole config table (50,656 characters,
+  7 matching rows) came back as a 25,000-character slice that used the budget up: 1 of 20 matches
+  shown. Now all 20 fit in 6,700 characters. If the first match still doesn't fit, it is windowed
+  around the match, keeping the whole match when it fits.
 - **Every fetch is also saved as files** (`1129503`), and the output prints both paths: the full
   text (`Full text:`), fenced like the printed output and headed by its URL and fetch time, and
   the response as downloaded (`Original:`). Agents already know `rg`, `sed` and their own file

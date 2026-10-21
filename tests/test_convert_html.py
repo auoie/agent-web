@@ -156,7 +156,7 @@ def test_layout_wrappers_inside_headings_keep_section_context(pandoc: Pandoc, le
     assert out == f"{heading}\n\nValidate all inputs."
     passages, total = find_passages(out, "Validate", 1000)
     assert total == 1
-    assert passages[0].context == heading
+    assert passages[0].heading == heading
     assert out[passages[0].offset :].startswith("Validate all inputs.")
 
 

@@ -67,9 +67,10 @@ def test_fetch_saves_full_text_and_original(server: Server, config: Config) -> N
     assert Path(result.files.original).name.startswith("127.0.0.1-")
     saved = Path(result.files.text).read_text(encoding="utf-8")
     assert saved.startswith(f"Fetched: {server.url('/html')} at ")
-    assert (
-        "Title: Test page\n\n# Hello\n\nSome **content** here.\n</untrusted-web-content-" in saved
-    )
+    assert "Title:\n<untrusted-web-content-" in saved
+    assert "Test page\n</untrusted-web-content-" in saved
+    assert "Text:\n<untrusted-web-content-" in saved
+    assert "# Hello\n\nSome **content** here.\n</untrusted-web-content-" in saved
     assert ok(server.url("/html"), config).files == result.files
     whole = ok(server.url("/html"), config, whole_page=True).files
     assert whole is not None
