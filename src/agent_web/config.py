@@ -15,6 +15,8 @@ from typing import Any, cast
 from agent_web.failures import InvalidConfig
 
 BROWSERS = ("firefox", "librewolf", "chrome", "chromium", "brave", "vivaldi", "edge", "opera")
+ENGINES = ("google", "brave")
+BRAVE_KEY_ENV = "BRAVE_SEARCH_API_KEY"
 
 EXAMPLE_CONFIG = """\
 # agent-web configuration. Every key is optional.
@@ -30,6 +32,16 @@ min_interval_seconds = 2.0
 # When Google answers with its JavaScript check, run the check in a headless Firefox or LibreWolf
 # (with a throwaway copy of your Google cookies) and retry, instead of pausing searches
 browser_refresh = true
+# Google requests allowed per 10 minutes across all agents (0: no limit). Google started blocking
+# agents' searches after 25-38 in 10 minutes; past this limit, searches go to Brave (if a key is
+# set below) or wait their turn
+google_searches_per_10_minutes = 20
+# Which engine answers: "google" (Brave answers only while Google is paused or over the limit
+# above, if a key is set) or "brave" (every search)
+engine = "google"
+# Brave Search API key (https://api-dashboard.search.brave.com). The BRAVE_SEARCH_API_KEY
+# environment variable takes precedence. If you put it here, make this file private (chmod 600)
+# brave_api_key = "..."
 
 [fetch]
 # Domains that receive your browser cookies when fetched (subdomains included).
@@ -74,6 +86,9 @@ class Config:
     cookie_file: Path | None = None
     search_min_interval: float = 2.0
     browser_refresh: bool = True
+    google_budget: int = 20
+    search_engine: str = "google"
+    brave_api_key: str | None = None
     cookie_domains: tuple[str, ...] = ()
     timeout: float = 30.0
     max_download_bytes: int = 25 * 1024 * 1024
@@ -87,7 +102,15 @@ class Config:
 
 _SCHEMA: dict[str, frozenset[str]] = {
     "cookies": frozenset({"browser", "cookie_file"}),
-    "search": frozenset({"min_interval_seconds", "browser_refresh"}),
+    "search": frozenset(
+        {
+            "min_interval_seconds",
+            "browser_refresh",
+            "google_searches_per_10_minutes",
+            "engine",
+            "brave_api_key",
+        }
+    ),
     "fetch": frozenset(
         {"cookie_domains", "timeout_seconds", "max_download_mb", "allow_private_networks"}
     ),
@@ -183,6 +206,15 @@ def _parse(data: Mapping[str, Any]) -> Config:
         config = replace(config, search_min_interval=interval)
     if (refresh := _bool(search, "browser_refresh", "search")) is not None:
         config = replace(config, browser_refresh=refresh)
+    budget = _number(search, "google_searches_per_10_minutes", "search", 0)
+    if budget is not None:
+        config = replace(config, google_budget=int(budget))
+    if (engine := _string(search, "engine", "search")) is not None:
+        if engine.lower() not in ENGINES:
+            raise _Invalid(f"search.engine must be one of: {', '.join(ENGINES)}")
+        config = replace(config, search_engine=engine.lower())
+    if (key := _string(search, "brave_api_key", "search")) is not None:
+        config = replace(config, brave_api_key=key)
 
     fetch = _table(data, "fetch")
     if (cookie_domains := _domains(fetch, "cookie_domains")) is not None:
@@ -226,6 +258,8 @@ def apply_env(config: Config) -> Config:
         config = replace(config, allow_private_networks=True)
     if pandoc := os.environ.get("AGENT_WEB_PANDOC"):
         config = replace(config, pandoc=pandoc)
+    if key := os.environ.get(BRAVE_KEY_ENV, "").strip():
+        config = replace(config, brave_api_key=key)
     return config
 
 

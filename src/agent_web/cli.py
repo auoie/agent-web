@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import TextIO
 
 from agent_web import __version__
-from agent_web.config import EXAMPLE_CONFIG, Config, config_path, load_config
+from agent_web.config import (
+    BRAVE_KEY_ENV,
+    ENGINES,
+    EXAMPLE_CONFIG,
+    Config,
+    config_path,
+    load_config,
+)
 from agent_web.failures import EXIT_OK, EXIT_USAGE, Failure, InvalidConfig, describe, exit_code
 from agent_web.search import MAX_PAGE
 
@@ -63,8 +71,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         metavar="N",
-        help=f"which results page, 1-{MAX_PAGE} (default 1). Each search is one Google request "
-        "with usually 8-10 results",
+        help=f"which results page, 1-{MAX_PAGE} (default 1). Each search is one request with "
+        "usually 8-10 results",
+    )
+    search.add_argument(
+        "--engine",
+        choices=ENGINES,
+        help="answer with this engine only. By default Google answers, and Brave answers when "
+        "Google can't (if a Brave Search API key is configured); the first line says which did",
     )
     search.add_argument("--json", action="store_true", help="print JSON instead of text")
 
@@ -117,13 +131,14 @@ def _fail(failure: Failure, err: TextIO) -> int:
 
 def _search(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) -> int:
     from agent_web.output import render_search, search_json
-    from agent_web.search.google import SearchResults, search
+    from agent_web.search import SearchResults
+    from agent_web.search.dispatch import search
 
     page = int(args.page)
     if not 1 <= page <= MAX_PAGE:
         print(f"web: --page must be between 1 and {MAX_PAGE}", file=err)
         return EXIT_USAGE
-    outcome = search(str(args.query), page, config)
+    outcome = search(str(args.query), page, config, args.engine)
     if not isinstance(outcome, SearchResults):
         return _fail(outcome, err)
     print(search_json(outcome) if args.json else render_search(outcome), file=out)
@@ -176,6 +191,7 @@ def _doctor(config: Config, out: TextIO) -> int:
     from agent_web.convert.pandoc import find_pandoc
     from agent_web.cookies import load_browser_cookies
     from agent_web.failures import CookieReadFailure, ToolMissing
+    from agent_web.search.brave import last_quota
     from agent_web.search.google import signed_in
     from agent_web.search.limiter import limiter_for
     from agent_web.search.refresh import recent_refreshes
@@ -203,7 +219,11 @@ def _doctor(config: Config, out: TextIO) -> int:
         print(
             f"google:   NOT signed in to Google in {config.browser}: searches will fail", file=out
         )
-    if paused := limiter_for(config).paused():
+    limiter = limiter_for(config)
+    used = limiter.requests_in_window()
+    limit = f" of {config.google_budget} allowed" if config.google_budget else " (no limit set)"
+    print(f"google:   searches in the last 10 minutes: {used}{limit}", file=out)
+    if paused := limiter.paused():
         problems += 1
         minutes = -(-int(paused.seconds_left) // 60)
         print(
@@ -213,10 +233,35 @@ def _doctor(config: Config, out: TextIO) -> int:
         )
     for line in recent_refreshes(config):
         print(f"google:   refresh {line}", file=out)
+    problems += _doctor_brave(config, out, last_quota(config))
     domains = ", ".join(config.cookie_domains) or "(none: every fetch is anonymous)"
     print(f"cookies:  sent on fetch to: {domains}", file=out)
     print(f"cache:    {config.cache_dir}", file=out)
     return EXIT_USAGE if problems else EXIT_OK
+
+
+def _doctor_brave(config: Config, out: TextIO, quota: str | None) -> int:
+    """Print the Brave lines; return 1 if something needs fixing."""
+    engine = config.search_engine
+    if config.brave_api_key is None:
+        if engine == "brave":
+            print("brave:    NO API KEY, but search.engine is brave: searches will fail", file=out)
+            return 1
+        print("brave:    no API key: searches stop while Google is paused", file=out)
+        return 0
+    path = config_path()
+    from_env = bool(os.environ.get(BRAVE_KEY_ENV, "").strip())
+    where = BRAVE_KEY_ENV if from_env else str(path)
+    role = "answers every search" if engine == "brave" else "answers when Google can't"
+    print(f"brave:    API key set ({where}); {role}", file=out)
+    if quota:
+        print(f"brave:    {quota}", file=out)
+    if not from_env and path.exists() and path.stat().st_mode & 0o077:
+        print(
+            f"brave:    WARNING: {path} holds the key and others can read it: chmod 600", file=out
+        )
+        return 1
+    return 0
 
 
 def _config(args: argparse.Namespace, config: Config, out: TextIO) -> int:
@@ -225,7 +270,8 @@ def _config(args: argparse.Namespace, config: Config, out: TextIO) -> int:
         return EXIT_OK
     print(f"# {config_path()}", file=out)
     for key, value in config.__dict__.items():
-        print(f"{key} = {value!r}", file=out)
+        shown = "(set, not shown)" if key == "brave_api_key" and value else repr(value)
+        print(f"{key} = {shown}", file=out)
     return EXIT_OK
 
 

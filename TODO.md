@@ -20,11 +20,11 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
   fallback).
 - **More site rules** like the Reddit one, e.g. YouTube transcripts or Hacker News threads
   (Defuddle has extractors for these). Also from Defuddle: strip line numbers from code blocks.
-- **Optional search APIs:** e.g. the Brave Search API (the backend behind Claude Code's
-  WebSearch) or Firecrawl's search, configured with an API key, as an alternative to Google
-  cookies or a fallback when Google shows a captcha or the browser isn't signed in. Queries would
-  then go to that provider, and results should stay in the same title/URL/snippet format.
-  Fetching would stay local.
+- **Tuning the Google budget:** 20 searches per 10 minutes comes from one day of blocks (after
+  25-38). Only refreshes are logged; logging each block with the number of searches before it
+  would show whether 20 is too strict or too loose.
+- **Firecrawl as another fallback engine:** its free plan needs no card (500 searches a month,
+  10 a minute), so it could serve users without a Brave key.
 - **Refreshing Google's token before it runs out:** a browser gets a fresh `__Secure-STRP` (5
   minutes) on every search, agent-web only after Google challenges it. If
   `~/.cache/agent-web/google-refresh.log` shows a refresh on nearly every search during busy

@@ -31,7 +31,7 @@ from typing import Protocol
 from agent_web.config import Config
 from agent_web.cookies import MILLISECONDS_THRESHOLD
 from agent_web.jsonvalue import as_dict, as_list, get_bool, get_float, get_str
-from agent_web.search.limiter import Paused, RateLimiter
+from agent_web.search.limiter import OverBudget, Paused, RateLimiter
 
 # At most one browser refresh a minute, across processes; a search blocked sooner reuses the last
 # refresh's cookies or pauses.
@@ -304,8 +304,11 @@ class BrowserRefresh:
                 if not stored:
                     return f"a refresh {age:.0f} s ago got nothing to reuse"
                 return Refreshed(stored, f"reused a refresh {age:.0f} s old")
-            if (paused := limiter.wait()) is not None:
-                return paused
+            waited = limiter.wait()
+            if isinstance(waited, OverBudget):
+                return f"the Google budget is used up ({waited.requests} requests in 10 minutes)"
+            if waited is not None:
+                return waited
             limiter.note_refresh()
             started = self._now()
             got = run_browser(url, self.browser, self.source, self.cache_dir / "refresh")

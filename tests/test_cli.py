@@ -175,6 +175,43 @@ def test_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (
         "searches paused for 5 more minute(s): Google answered a search with its JavaScript" in out
     )
+    assert "google:   searches in the last 10 minutes: 0 of 20 allowed" in out
+    assert "brave:    no API key: searches stop while Google is paused" in out
+
+
+def test_doctor_and_config_with_a_brave_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from http.cookiejar import Cookie
+
+    from agent_web.convert.pandoc import Pandoc
+    from test_cookies import cookie
+
+    def loader(*args: object) -> list[Cookie]:
+        return [cookie("SID", "x", ".google.com")]
+
+    def pandoc(*args: object) -> Pandoc:
+        return Pandoc("/usr/bin/pandoc", (3, 9))
+
+    monkeypatch.setattr("agent_web.cookies.load_browser_cookies", loader)
+    monkeypatch.setattr("agent_web.convert.pandoc.find_pandoc", pandoc)
+    path = tmp_path / "config" / "agent-web" / "config.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text('[search]\nbrave_api_key = "SECRET-KEY"\n', encoding="utf-8")
+    path.chmod(0o644)
+    code, out, _ = run_cli("doctor")
+    assert code == 1
+    assert f"brave:    API key set ({path}); answers when Google can't" in out
+    assert "others can read it: chmod 600" in out
+    path.chmod(0o600)
+    code, out, _ = run_cli("doctor")
+    assert code == 0
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "ENV-KEY")
+    code, out, _ = run_cli("doctor")
+    assert "API key set (BRAVE_SEARCH_API_KEY)" in out
+    code, out, _ = run_cli("config")
+    assert "brave_api_key = (set, not shown)" in out
+    assert "KEY" not in out.replace("brave_api_key", "")
 
 
 def test_split_search_query_explains_quoting() -> None:
@@ -193,18 +230,27 @@ def test_split_search_query_explains_quoting() -> None:
 def test_search_output_and_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     asked: list[int] = []
 
-    def fake_search(query: str, page: int, config: Config) -> SearchResults | Failure:
+    engines: list[str | None] = []
+
+    def fake_search(
+        query: str, page: int, config: Config, engine: str | None = None
+    ) -> SearchResults | Failure:
         asked.append(page)
+        engines.append(engine)
         if query == "blocked":
             return Captcha("Google")
         return SearchResults(query, (SearchResult("Title", "https://a.example/", "snippet"),))
 
-    monkeypatch.setattr("agent_web.search.google.search", fake_search)
+    monkeypatch.setattr("agent_web.search.dispatch.search", fake_search)
     code, out, _ = run_cli("search", "pandoc")
     assert code == 0
     assert "1. Title\n   https://a.example/\n   snippet" in out
-    assert run_cli("search", "pandoc", "--page", "5")[0] == 0
+    assert run_cli("search", "pandoc", "--page", "5", "--engine", "brave")[0] == 0
     assert asked == [1, 5]
+    assert engines == [None, "brave"]
+    code, _, err = run_cli("search", "pandoc", "--engine", "bing")
+    assert code == 1
+    assert "invalid choice: 'bing'" in err
     for bad in ("0", "6"):
         code, _, err = run_cli("search", "pandoc", "--page", bad)
         assert code == 1

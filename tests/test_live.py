@@ -13,8 +13,9 @@ import pytest
 from agent_web.config import Config, load_config
 from agent_web.fetch import fetch
 from agent_web.model import FetchResult, HtmlPage, PdfDocument, PlainText
+from agent_web.search import brave
 from agent_web.search.google import SearchResults, search
-from conftest import REAL_HOME
+from conftest import REAL_BRAVE_KEY, REAL_HOME
 
 pytestmark = pytest.mark.live
 
@@ -23,6 +24,8 @@ pytestmark = pytest.mark.live
 def live_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     monkeypatch.setenv("HOME", str(REAL_HOME))  # the real browser profile, for the refresh
     monkeypatch.setenv("XDG_CONFIG_HOME", str(REAL_HOME / ".config"))  # the real config
+    if REAL_BRAVE_KEY:
+        monkeypatch.setenv("BRAVE_SEARCH_API_KEY", REAL_BRAVE_KEY)
     config = load_config()
     assert isinstance(config, Config), config
     return replace(config, cache_dir=tmp_path / "cache")
@@ -34,6 +37,18 @@ def test_google_search(live_config: Config) -> None:
     assert len(outcome.results) >= 5
     assert all(r.url.startswith("http") and r.title for r in outcome.results)
     assert sum(bool(r.snippet) for r in outcome.results) >= 3
+
+
+def test_brave_search(live_config: Config) -> None:
+    if live_config.brave_api_key is None:
+        pytest.skip("no Brave Search API key configured")
+    found = brave.search(
+        'sqlite "write-ahead log" -site:sqlite.org', 1, live_config, live_config.brave_api_key
+    )
+    assert isinstance(found, list), found
+    assert len(found) >= 5
+    assert all(r.url.startswith("http") and r.title for r in found)
+    assert not any("sqlite.org" in r.url.split("/")[2] for r in found)
 
 
 def test_wikipedia_merged_cells_survive(live_config: Config) -> None:

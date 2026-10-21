@@ -88,6 +88,37 @@ class SearchPaused:
     minutes_left: int
 
 
+@dataclass(frozen=True)
+class SearchBudgetUsed:
+    """The agents sent as many searches as search.google_searches_per_10_minutes allows."""
+
+    service: str
+    searches: int
+    seconds_left: int
+
+
+@dataclass(frozen=True)
+class NoApiKey:
+    service: str
+
+
+@dataclass(frozen=True)
+class SearchApiError:
+    """A search API answered with an error status."""
+
+    service: str
+    status: int
+    detail: str
+
+
+@dataclass(frozen=True)
+class FallbackFailed:
+    """The first engine couldn't answer, and neither could the one asked instead."""
+
+    primary: Failure
+    fallback: Failure
+
+
 # After a captcha or JavaScript check, every process stops searching for this long: retrying
 # during a block keeps it going.
 SEARCH_PAUSE_MINUTES = 10
@@ -107,6 +138,10 @@ Failure: TypeAlias = (
     | ConsentRequired
     | JavaScriptWall
     | SearchPaused
+    | SearchBudgetUsed
+    | NoApiKey
+    | SearchApiError
+    | FallbackFailed
 )
 
 EXIT_OK = 0
@@ -124,8 +159,23 @@ def exit_code(failure: Failure) -> int:
             return EXIT_USAGE
         case NetworkFailure() | TooLarge() | TooManyRedirects():
             return EXIT_NETWORK
-        case NotSignedIn() | Captcha() | ConsentRequired() | JavaScriptWall() | SearchPaused():
+        case (
+            NotSignedIn()
+            | Captcha()
+            | ConsentRequired()
+            | JavaScriptWall()
+            | SearchPaused()
+            | SearchBudgetUsed()
+        ):
             return EXIT_BLOCKED
+        case NoApiKey():
+            return EXIT_USAGE
+        case SearchApiError(status=status):
+            if status in (401, 403, 422):
+                return EXIT_USAGE
+            return EXIT_BLOCKED if status in (402, 429) else EXIT_NETWORK
+        case FallbackFailed(primary=primary):
+            return exit_code(primary)
         case _:
             assert_never(failure)
 
@@ -181,5 +231,35 @@ def describe(failure: Failure) -> str:
                 f"answered a search with {cause}; retrying sooner keeps the block going. Work with "
                 "the pages already found (web fetch still works), or wait"
             )
+        case SearchBudgetUsed(service, searches, seconds_left):
+            return (
+                f"the agents on this machine sent {searches} {service} searches in the last 10 "
+                "minutes, the most agent-web allows: more makes "
+                f"{service} block searches for everyone. The next one is possible in "
+                f"{_duration(seconds_left)}. Work with the pages already found (web fetch still "
+                "works), or wait. (With a Brave Search API key in agent-web's config, Brave "
+                "would answer instead.)"
+            )
+        case NoApiKey(service):
+            return (
+                f"no {service} Search API key: set the BRAVE_SEARCH_API_KEY environment variable "
+                "or search.brave_api_key in agent-web's config (web config --example)"
+            )
+        case SearchApiError(service, status, detail):
+            message = f"the {service} Search API answered HTTP {status}"
+            message += f": {detail}" if detail else ""
+            if status in (401, 403, 422):
+                message += f". Check the {service} Search API key in agent-web's config"
+            elif status in (402, 429):
+                message += " (too many requests at once, or the month's credit is used up)"
+            return message
+        case FallbackFailed(primary, fallback):
+            return f"{describe(primary)}. Brave couldn't answer instead: {describe(fallback)}"
         case _:
             assert_never(failure)
+
+
+def _duration(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds} s"
+    return f"{-(-seconds // 60)} min"

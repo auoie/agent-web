@@ -16,6 +16,7 @@ from agent_web.failures import (
     JavaScriptWall,
     NetworkFailure,
     NotSignedIn,
+    SearchBudgetUsed,
     SearchPaused,
 )
 from agent_web.http import DownloadFailure, HttpResponse
@@ -27,7 +28,7 @@ from agent_web.search.google import (
     search,
     search_url,
 )
-from agent_web.search.limiter import Paused, RateLimiter
+from agent_web.search.limiter import OverBudget, Paused, RateLimiter
 from agent_web.search.refresh import Refreshed
 from conftest import FIXTURES
 from test_cookies import cookie
@@ -444,3 +445,83 @@ def test_pause_is_shared_and_ends(tmp_path: Path) -> None:
     assert limiter().wait() is None
     assert limiter().paused() is None
     assert json.loads(state.read_text())["last"] == clock[0]
+
+
+class QueueLimiter(FakeLimiter):
+    """Answers wait() from a list, then with None (a free slot)."""
+
+    def __init__(self, answers: list[Paused | OverBudget | None]) -> None:
+        super().__init__()
+        self.answers = answers
+
+    def wait(self) -> Paused | OverBudget | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        self.calls += 1
+        return self.answers.pop(0) if self.answers else None
+
+
+def test_a_used_up_budget_sends_nothing(config: Config) -> None:
+    seen: list[str] = []
+    limiter = QueueLimiter([OverBudget(20, 95.2)])
+    outcome = search(
+        "q",
+        1,
+        config,
+        cookie_loader=signed_in_loader,
+        downloader=make_downloader({0: response(numbered(0, 9))}, seen),
+        limiter=limiter,
+        budget_wait=30,
+    )
+    assert outcome == SearchBudgetUsed("Google", 20, 96)
+    assert seen == []
+    assert limiter.pauses == []  # Google didn't block anything
+
+
+def test_a_search_waits_for_a_budget_slot_that_frees_up_soon(config: Config) -> None:
+    seen: list[str] = []
+    sleeps: list[float] = []
+    limiter = QueueLimiter([OverBudget(20, 4.0), OverBudget(20, 3.0)])
+    outcome = search(
+        "q",
+        1,
+        config,
+        cookie_loader=signed_in_loader,
+        downloader=make_downloader({0: response(numbered(0, 9))}, seen),
+        limiter=limiter,
+        budget_wait=30,
+        sleep=sleeps.append,
+    )
+    assert isinstance(outcome, SearchResults)
+    assert sleeps == [4.0, 3.0]
+    assert len(seen) == 1
+    # Without time to wait (Brave can answer instead), it says so right away.
+    limiter = QueueLimiter([OverBudget(20, 4.0)])
+    outcome = search(
+        "q",
+        1,
+        config,
+        cookie_loader=signed_in_loader,
+        downloader=make_downloader({0: response(numbered(0, 9))}, seen),
+        limiter=limiter,
+        budget_wait=0,
+        sleep=sleeps.append,
+    )
+    assert outcome == SearchBudgetUsed("Google", 20, 4)
+
+
+def test_rate_limiter_budget_is_a_rolling_window(tmp_path: Path) -> None:
+    clock = [1000.0]
+    state = tmp_path / "state"
+
+    def limiter() -> RateLimiter:  # a new process each time, sharing the state file
+        return RateLimiter(state, 0, budget=3, now=lambda: clock[0], sleep=lambda s: None)
+
+    for step in range(3):
+        clock[0] = 1000.0 + 100 * step
+        assert limiter().wait() is None
+    clock[0] = 1250.0
+    assert limiter().wait() == OverBudget(3, 350.0)  # the first one leaves the window at 1600
+    assert limiter().requests_in_window() == 3
+    clock[0] = 1601.0
+    assert limiter().wait() is None
+    assert limiter().requests_in_window() == 3
+    assert RateLimiter(state, 0, budget=0, now=lambda: clock[0]).wait() is None  # 0: no limit

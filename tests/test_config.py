@@ -32,6 +32,9 @@ def test_full_config(tmp_path: Path) -> None:
         cookie_file = "~/cookies.sqlite"
         [search]
         min_interval_seconds = 5
+        google_searches_per_10_minutes = 12
+        engine = "Brave"
+        brave_api_key = " KEY "
         [fetch]
         cookie_domains = ["Reddit.com", ".news.example.org", "reddit.com"]
         timeout_seconds = 12.5
@@ -53,6 +56,9 @@ def test_full_config(tmp_path: Path) -> None:
     assert config.browser == "chrome"
     assert config.cookie_file == Path("~/cookies.sqlite").expanduser()
     assert config.search_min_interval == 5
+    assert config.google_budget == 12
+    assert config.search_engine == "brave"
+    assert config.brave_api_key == "KEY"
     assert config.cookie_domains == ("news.example.org", "reddit.com")
     assert config.timeout == 12.5
     assert config.max_download_bytes == 3 * 1024 * 1024
@@ -80,6 +86,9 @@ def test_full_config(tmp_path: Path) -> None:
         ({"fetch": {"timeout_seconds": 0}}, "must be >= 1"),
         ({"fetch": {"allow_private_networks": "yes"}}, "true or false"),
         ({"output": {"max_chars": 10}}, "must be >= 500"),
+        ({"search": {"engine": "bing"}}, "search.engine must be one of: google, brave"),
+        ({"search": {"google_searches_per_10_minutes": -1}}, "must be >= 0"),
+        ({"search": {"brave_api_key": ""}}, "non-empty string"),
     ],
 )
 def test_invalid_config(data: dict[str, Any], message: str) -> None:
@@ -100,11 +109,13 @@ def test_environment_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("AGENT_WEB_CACHE_DIR", str(tmp_path / "c"))
     monkeypatch.setenv("AGENT_WEB_ALLOW_PRIVATE_NETWORKS", "1")
     monkeypatch.setenv("AGENT_WEB_PANDOC", "/x/pandoc")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "FROM-ENV")
     config = load_config(tmp_path / "missing.toml")
     assert isinstance(config, Config)
     assert config.cache_dir == tmp_path / "c"
     assert config.allow_private_networks
     assert config.pandoc == "/x/pandoc"
+    assert config.brave_api_key == "FROM-ENV"
 
 
 def test_config_path_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

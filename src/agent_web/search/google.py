@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from http.cookiejar import Cookie
 from typing import Literal
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
@@ -33,18 +33,22 @@ from agent_web.failures import (
     Failure,
     JavaScriptWall,
     NotSignedIn,
+    SearchBudgetUsed,
     SearchPaused,
 )
 from agent_web.http import DownloadFailure, HttpResponse, download
 from agent_web.invisible import reveal
-from agent_web.search.limiter import Paused, RateLimiter, limiter_for
+from agent_web.search import RESULTS_PER_PAGE, SearchResult, SearchResults
+from agent_web.search.limiter import OverBudget, Paused, RateLimiter, limiter_for
 from agent_web.search.refresh import Refresher, refresher_for
 from agent_web.urls import domain_matches, normalize
 
 SEARCH_URL = "https://www.google.com/search"
 SERVICE = "Google"
 AUTH_COOKIES = frozenset({"SID", "__Secure-1PSID", "__Secure-3PSID"})
-RESULTS_PER_PAGE = 10
+# How long a search waits for a slot when the agents have used up the Google budget, before
+# saying so instead.
+BUDGET_WAIT_SECONDS = 30.0
 MAX_SNIPPET = 400
 _GOOGLE_HOST = re.compile(r"(?:^|\.)google\.[a-z]{2,3}(?:\.[a-z]{2})?$")
 _INTERNAL_PATHS = (
@@ -64,20 +68,6 @@ _BLOCK_TAGS = frozenset(
 )
 
 Downloader = Callable[..., HttpResponse | DownloadFailure]
-
-
-@dataclass(frozen=True)
-class SearchResult:
-    title: str
-    url: str
-    snippet: str
-
-
-@dataclass(frozen=True)
-class SearchResults:
-    query: str
-    results: tuple[SearchResult, ...]
-    page: int = 1
 
 
 def _text(
@@ -241,16 +231,35 @@ def _paused(paused: Paused) -> SearchPaused:
     return SearchPaused(SERVICE, paused.cause, math.ceil(paused.seconds_left / 60))
 
 
+def _claim(
+    limiter: RateLimiter, budget_wait: float, sleep: Callable[[float], None]
+) -> Paused | OverBudget | None:
+    """A request slot. While the budget is used up, wait for one if that takes at most
+    `budget_wait` seconds in all."""
+    waited = 0.0
+    while True:
+        claimed = limiter.wait()
+        if not isinstance(claimed, OverBudget) or waited + claimed.seconds_left > budget_wait:
+            return claimed
+        sleep(claimed.seconds_left)
+        waited += claimed.seconds_left
+
+
 def _attempt(
     url: str,
     config: Config,
     cookies: list[Cookie],
     downloader: Downloader,
     limiter: RateLimiter,
+    budget_wait: float,
+    sleep: Callable[[float], None],
 ) -> list[SearchResult] | Failure:
     """One request to Google, in turn with every other process."""
-    if (paused := limiter.wait()) is not None:
-        return _paused(paused)
+    claimed = _claim(limiter, budget_wait, sleep)
+    if isinstance(claimed, OverBudget):
+        return SearchBudgetUsed(SERVICE, claimed.requests, math.ceil(claimed.seconds_left))
+    if claimed is not None:
+        return _paused(claimed)
     response = downloader(
         url,
         timeout=config.timeout,
@@ -275,12 +284,16 @@ def search(
     downloader: Downloader = download,
     limiter: RateLimiter | None = None,
     refresher: Refresher | Literal["auto"] | None = "auto",
+    budget_wait: float = BUDGET_WAIT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> SearchResults | Failure:
     """The results on one Google results page (1 is the first): one request.
 
     If Google answers with its JavaScript check, a headless browser runs the check (refresh.py)
     and the search is retried once. A captcha, or a check the refresh doesn't get past, pauses
-    every process's searches for SEARCH_PAUSE_MINUTES.
+    every process's searches for SEARCH_PAUSE_MINUTES. When the agents have used up the budget
+    (search.google_searches_per_10_minutes), the search waits up to `budget_wait` seconds for a
+    slot, then returns SearchBudgetUsed without sending anything.
     """
     cookies = cookie_loader(config.browser, "google.com", config.cookie_file)
     if isinstance(cookies, CookieReadFailure):
@@ -293,7 +306,7 @@ def search(
     if refresher is not None:
         cookies = overlay(cookies, refresher.cookies())
     url = search_url(query, page - 1)
-    outcome = _attempt(url, config, cookies, downloader, limiter)
+    outcome = _attempt(url, config, cookies, downloader, limiter, budget_wait, sleep)
     if isinstance(outcome, JavaScriptWall) and refresher is not None:
         refreshed = refresher.refresh(url, limiter)
         if isinstance(refreshed, Paused):
@@ -301,9 +314,8 @@ def search(
         if isinstance(refreshed, str):
             refresher.log(f"refresh failed: {refreshed}")
         else:
-            outcome = _attempt(
-                url, config, overlay(cookies, refreshed.cookies), downloader, limiter
-            )
+            retry_cookies = overlay(cookies, refreshed.cookies)
+            outcome = _attempt(url, config, retry_cookies, downloader, limiter, budget_wait, sleep)
             result = "got results" if isinstance(outcome, list) else f"got {outcome}"
             refresher.log(f"{refreshed.how}; the retry {result}")
     if isinstance(outcome, Captcha | JavaScriptWall):

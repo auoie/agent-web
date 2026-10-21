@@ -13,8 +13,11 @@ search tools, which may hand you another model's summary or a lossy conversion.
 ## Commands
 
 - `web search 'QUERY' [--page N]`: one page of Google results (title, URL, snippet), usually
-  8-10, from exactly one request to Google. For more, run it again with `--page 2` (up to 5), as
-  the hint at the end of the output says.
+  8-10, from exactly one request. For more, run it again with `--page 2` (up to 5), as the hint
+  at the end of the output says. If the user has set up Brave Search, Brave answers when Google
+  can't (searches paused, or the agents' Google budget used up): the first line then says
+  `Brave results for: …` and a `Note:` says why. Run the next-page hint as printed (it keeps
+  `--engine brave`). `--engine google` or `--engine brave` asks one engine only.
   **The query is one argument:** put all of it in single quotes, and any phrase inside it in
   double quotes: `web search 'sqlite -site:sqlite.org "write-ahead log"' --page 2`. Google
   operators work (`site:`, `-site:`, `OR`, quotes, `filetype:pdf`).
@@ -151,13 +154,15 @@ page doesn't say it.
   print 50,000 characters, and the end gets cut. Fetch pages in separate calls, or give each a
   smaller `--max-chars` (e.g. 5,000 each for five pages) and continue in the useful ones.
 - **Firing off many searches at once.** Every agent on the machine searches with the user's one
-  Google account, and requests are spaced 2 seconds apart, so they queue up. A long burst (dozens
-  of searches in a few minutes, e.g. from several agents in parallel) can still make Google block
-  searches for a while. Run a few, read the results, then refine.
+  Google account: requests are spaced 2 seconds apart, and all agents together get at most 20
+  Google searches per 10 minutes. Past that, Brave answers if the user set it up; otherwise
+  `web search` waits up to 30 seconds for a turn or says when the next search is possible (exit
+  code 4). Run a few searches, read the results, then refine.
 - **Retrying a blocked search.** When Google blocks searches (a captcha, or a JavaScript check
   agent-web couldn't get past), `web search` pauses for 10 minutes for every agent and says so
   (exit code 4). Don't retry or loop with `sleep`: retrying keeps the block going. Work with the
-  pages you already found (`web fetch` still works), or wait.
+  pages you already found (`web fetch` still works), or wait. (If Brave is set up, it answers
+  during the pause and you won't see this.)
 - **Retrying a blocked page.** If a Note says the page is a bot check or an error page, retrying
   rarely helps. Say the page couldn't be read, or tell the user about the cookie setting the Note
   mentions.
@@ -187,5 +192,5 @@ page doesn't say it.
 ## Exit codes
 
 0 ok · 1 usage, config or setup error · 2 network error (including too large or too many
-redirects) · 3 HTTP error status · 4 blocked (captcha, bot check, searches paused, not signed in
-to Google)
+redirects) · 3 HTTP error status · 4 blocked (captcha, bot check, searches paused, Google search
+budget used up, not signed in to Google)

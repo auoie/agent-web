@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import gzip
+import os
 import shutil
 import threading
 import time
@@ -17,6 +18,8 @@ from agent_web.config import Config
 FIXTURES = Path(__file__).parent / "fixtures"
 # The user's real home, for the opt-in live tests; every other test gets a temporary one.
 REAL_HOME = Path.home()
+# The user's Brave key, if set in the environment, for the opt-in live tests.
+REAL_BRAVE_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
 
 requires_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc not installed")
 
@@ -33,6 +36,7 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "AGENT_WEB_CACHE_DIR",
         "AGENT_WEB_ALLOW_PRIVATE_NETWORKS",
         "AGENT_WEB_PANDOC",
+        "BRAVE_SEARCH_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
 

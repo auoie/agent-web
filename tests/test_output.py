@@ -427,3 +427,16 @@ def test_next_page_hint_quotes_the_query_and_stops_at_the_last_page() -> None:
 def test_search_rendering_without_results() -> None:
     out = render_search(SearchResults("q", (), page=3))
     assert out == "Google results for: q (page 3)\nNo results."
+
+
+def test_search_rendering_names_the_engine_that_answered() -> None:
+    hit = (SearchResult("T", "https://a.example/", "s"),)
+    note = "Google searches are paused for 7 more minute(s), so Brave answered this search"
+    out = render_search(SearchResults("q x", hit, page=1, engine="Brave", note=note))
+    lines = out.splitlines()
+    assert lines[0] == "Brave results for: q x (page 1)"
+    assert lines[1] == f"Note: {note}."
+    assert lines[2].startswith("Snippets come from Brave and can be stale")
+    assert lines[-1] == "[More results: web search 'q x' --page 2 --engine brave]"
+    data = json.loads(search_json(SearchResults("q", hit, engine="Brave", note=note)))
+    assert (data["engine"], data["note"]) == ("Brave", note)

@@ -49,8 +49,9 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
 
 ## Search: Google with the user's browser cookies
 
-Chosen because it is direct and was the only free approach that worked from the user's IP. Paid
-search APIs weren't needed for that; they remain an option for later (see TODO.md).
+Chosen because it is direct and was the only free approach that worked from the user's IP. A
+paid search API (Brave) was added later as an optional fallback, for when Google refuses the
+agents' searches (see below).
 
 - Every keyless approach was blocked or captcha'd from the user's IP: ddgs (DuckDuckGo and
   others), DonSeTch's search, Google's no-JavaScript/Nokia lane (what SearXNG uses), plain Google.
@@ -85,6 +86,34 @@ search APIs weren't needed for that; they remain an option for later (see TODO.m
   `search.browser_refresh = false`. Chrome-family browsers aren't supported yet: they'd need their
   own code (a headless Chrome, and Chrome encrypts cookie values). Not done (yet): refreshing
   before the 5-minute `__Secure-STRP` runs out, which a browser does on every search.
+- **At most 20 Google searches per 10 minutes, shared by all agents**
+  (`search.google_searches_per_10_minutes`; the limiter keeps each request's start time in its
+  state file). From the 2026-10-21 transcripts: Google blocked agents' searches after 29, 27, 38
+  and 25 searches in the preceding 10 minutes, and the busiest 10 minutes without a block had 29.
+  The first refresh in real use (20:35:54) got past the JavaScript check, but Google answered the
+  retry with a captcha, while the user's own Firefox kept searching normally: when the check
+  comes from volume, Google is judging agent-web's requests, and fresh cookies don't change
+  that. So the fix is fewer requests, not more refreshes. Past the budget, Brave answers if set
+  up; otherwise a search waits for a slot if one frees up within 30 s (a shell tool call can wait
+  that long) and else says when the next is possible (exit 4) without contacting Google. The
+  budget is an estimate from one day: Google's thresholds aren't published and may vary.
+- **Brave answers when Google can't** (`search/brave.py`, `search/dispatch.py`), with the
+  user's Brave Search API key. This was the plan agreed before building the refresh, for the case
+  that refreshes don't keep agents searching. Brave over Firecrawl (whose free plan has no card
+  but gives 500 searches a month at 10 a minute, from an undocumented source): about 1,000 free
+  searches a month ($5 monthly credit), its own index, documented operators (`site:`, quotes,
+  `-`, `OR`), and 50 requests a second; the user chose it. Brave answers when Google searches are
+  paused, when Google answers with a captcha or a check the refresh doesn't get past, when the
+  budget is used up, and when Google can't be used (not signed in, unreadable cookies, consent
+  page), but not on network errors, which Brave would likely share. The results say which engine
+  answered and why (`Brave results for: …` and a `Note:`), and the next-page hint keeps
+  `--engine brave` so a query's pages come from one engine. If Brave fails too, both reasons are
+  reported. Only the query goes to Brave, never cookies; pages are still fetched locally. Brave is
+  a middleman for the queries it answers, accepted to keep agents searching. The key comes from
+  `BRAVE_SEARCH_API_KEY`, else the config file (`web doctor` warns if others can read it, `web
+  config` doesn't print it). Brave's per-second limit (HTTP 429) is retried twice after 1.1 s, and
+  the limit headers of its last answer are shown by `web doctor`. `search.engine = "brave"` sends
+  every search to Brave and leaves the Google account alone.
 - **Each search is one request for one results page** (`--page N`, 1-5, default 1), and all of
   its 8-10 results are returned. The output ends with the command for the next page, like
   `web fetch`'s `--offset` hint. A result count (`-n`, removed without an alias) either made a

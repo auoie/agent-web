@@ -34,8 +34,7 @@ from agent_web.model import (
     RedditThread,
     ScannedPdf,
 )
-from agent_web.search import MAX_PAGE
-from agent_web.search.google import SearchResults
+from agent_web.search import MAX_PAGE, SearchResults
 
 FENCE_PREFIX = "untrusted-web-content"
 UNTRUSTED_NOTE = (
@@ -446,13 +445,16 @@ def saved_text(content: Content, fence: Callable[[], str] = new_fence) -> str:
 
 
 def render_search(results: SearchResults, fence: Callable[[], str] = new_fence) -> str:
-    lines = [f"Google results for: {results.query} (page {results.page})"]
+    engine = results.engine
+    lines = [f"{engine} results for: {results.query} (page {results.page})"]
+    if results.note:
+        lines.append(f"Note: {results.note}.")
     if not results.results:
         lines.append("No results.")
         return "\n".join(lines)
     tag = fence()
     lines += [
-        "Snippets come from Google and can be stale or wrong. Fetch a page with "
+        f"Snippets come from {engine} and can be stale or wrong. Fetch a page with "
         "`web fetch URL` before relying on it.",
         UNTRUSTED_NOTE.format(fence=tag),
         f"<{tag}>",
@@ -466,7 +468,9 @@ def render_search(results: SearchResults, fence: Callable[[], str] = new_fence) 
     lines.append(f"</{tag}>")
     if results.page < MAX_PAGE:
         query = shlex.quote(results.query)
-        lines.append(f"[More results: web search {query} --page {results.page + 1}]")
+        # The next page comes from the same engine, so the pages line up.
+        same = "" if engine == "Google" else f" --engine {engine.lower()}"
+        lines.append(f"[More results: web search {query} --page {results.page + 1}{same}]")
     return "\n".join(lines)
 
 
@@ -474,6 +478,8 @@ def search_json(results: SearchResults) -> str:
     payload: dict[str, object] = {
         "query": results.query,
         "page": results.page,
+        "engine": results.engine,
+        "note": results.note,
         "results": [r.__dict__ for r in results.results],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

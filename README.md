@@ -25,6 +25,14 @@ and conversion problems are reported in `Note:` lines; long output can be read i
   Google session. All Google operators work. Each search fetches one results page (usually 8-10
   results) with one request; `--page 2` to `--page 5` get the next ones, and the output ends with
   the command for the next page.
+  - **Brave answers when Google can't** (optional, with a
+    [Brave Search API key](#brave-search-fallback)): while Google searches are paused, when Google
+    blocks one, or when the agents have used up the Google budget below. The first line says which
+    engine answered and a `Note:` says why, so agents never have to stop searching.
+  - **A Google budget shared by all agents:** at most 20 Google searches per 10 minutes. Google
+    started blocking agents' searches after 25-38 in 10 minutes. Past the budget, Brave answers;
+    without a Brave key, a search waits up to 30 seconds for its turn or says when the next one
+    is possible.
 - **`web fetch URL`** prints the page's own text:
   - **HTML** becomes markdown via pandoc plus a cleanup filter. Layout wrappers and attributes are
     removed. Simple tables become markdown tables. Tables with merged cells stay HTML tables, so
@@ -96,8 +104,10 @@ Set `TURNDOWN_DIR` to a folder with `node_modules/turndown` to include the WebFe
 
 ## Privacy
 
-There are no middlemen and no proxies:
-- **Searches** go from your machine to Google.
+There are no proxies, and no middlemen unless you add the Brave fallback:
+- **Searches** go from your machine to Google. With a Brave Search API key, the searches Google
+  refuses (or every search, with `search.engine = "brave"`) go to Brave instead, which sees those
+  queries. No cookies go to Brave.
 - **Pages** are fetched directly from your machine.
 - **Your model provider** sees what the agent reads, as with anything else in the conversation.
 - **Your browser cookies** are sent only to Google (for search) and to domains you explicitly list in
@@ -123,7 +133,7 @@ contain instructions aimed at agents ("visit /a, then /b…"). This is the
 > refusing links found inside fetched pages without approval. agent-web has no such check (an
 > earlier version had one as Claude Code hooks; it was removed to keep the tool agent-neutral).
 > To avoid the risk, keep `web fetch` on "ask" for agents that handle private data. Allowing
-> `web search` is lower risk: queries go only to Google.
+> `web search` is lower risk: queries go only to Google (and Brave, if you set it up).
 
 What agent-web does do:
 
@@ -142,8 +152,9 @@ What agent-web does do:
 - **Terminal safety.** Control characters are removed, so a page can't send escape codes to your
   terminal when you run `web` yourself.
 - **pandoc runs with `--sandbox`**, so converting a hostile page can't read files.
-- **Limits:** a 25 MB download cap, a 30 s timeout, at most 10 redirects, and at least 2 s between
-  Google requests (shared across processes). When Google answers with its JavaScript check, a
+- **Limits:** a 25 MB download cap, a 30 s timeout, at most 10 redirects, at least 2 s between
+  Google requests and at most 20 of them per 10 minutes (shared across processes; past that,
+  Brave answers if set up). When Google answers with its JavaScript check, a
   headless Firefox runs the check and the search is retried once (at most one such refresh a
   minute). After a captcha, or a check the refresh doesn't get past, searches pause for 10
   minutes for every process: retrying during a block keeps it going.
@@ -159,6 +170,8 @@ to auto-approving shell commands in general.
 - A browser signed in to Google (Firefox by default; Chrome, Chromium, Brave, Vivaldi, Edge, Opera
   and LibreWolf also work). Linux or macOS. Getting past Google's JavaScript check needs Firefox
   or LibreWolf installed, since it runs them headless.
+- Optional: a Brave Search API key, so searches continue when Google refuses them (see
+  [Brave search fallback](#brave-search-fallback)).
 
 ## Install
 
@@ -245,11 +258,43 @@ cookie_domains = ["reddit.com"]   # sites that get your browser session; default
 
 [search]
 min_interval_seconds = 2.0
-browser_refresh = true   # run Google's JavaScript check in headless Firefox, then retry
+browser_refresh = true                # run Google's JavaScript check in headless Firefox, then retry
+google_searches_per_10_minutes = 20   # shared by all agents; 0: no limit
+engine = "google"                     # or "brave": Brave answers every search
+# brave_api_key = "..."               # or the BRAVE_SEARCH_API_KEY environment variable
 ```
 
 Unknown keys are errors, so a typo can't silently fall back to a default. `web config` shows the
 effective settings.
+
+## Brave search fallback
+
+Google limits how many searches it takes from agents: on 2026-10-21 it blocked them after 25-38
+searches in 10 minutes, while the user's own browser kept working. With a Brave Search API key,
+searches Google refuses go to Brave instead, so agents keep going:
+
+1. Create a key at [api-dashboard.search.brave.com](https://api-dashboard.search.brave.com). It
+   costs $5 per 1,000 searches, and Brave adds $5 of free credit every month, so the first 1,000
+   searches a month are free. Brave asks for a card to prevent abuse; it charges only for credit
+   you choose to buy.
+2. Put the key in agent-web's config and make the file private:
+
+   ```bash
+   printf '\n[search]\nbrave_api_key = "YOUR-KEY"\n' >> ~/.config/agent-web/config.toml
+   chmod 600 ~/.config/agent-web/config.toml
+   ```
+
+   (If the file already has a `[search]` section, add the key line there instead.) Or set
+   `BRAVE_SEARCH_API_KEY` in the environment your agents start from; it takes precedence.
+3. `web doctor` shows whether the key is set and Brave's limits from its last answer.
+
+Brave answers when Google searches are paused, when Google answers with a captcha or a check the
+refresh doesn't get past, when the agents have used up the Google budget, and when Google can't be
+used at all (not signed in, cookies unreadable). Its results look the same, but the first line says
+`Brave results for: …` and a `Note:` says why; the next-page hint keeps `--engine brave` so the
+pages line up. `web search --engine google` (or `brave`) uses one engine only, and
+`search.engine = "brave"` sends every search to Brave and leaves your Google account alone. Brave
+supports the common operators (`site:`, quotes, `-word`, `OR`, `filetype:`).
 
 ## Output and exit codes
 
@@ -318,7 +363,7 @@ Exit codes:
 - 1: usage, config or missing tool
 - 2: network error
 - 3: HTTP error status
-- 4: blocked (captcha, bot check, searches paused, not signed in)
+- 4: blocked (captcha, bot check, searches paused, Google budget used up, not signed in)
 
 ## Limitations
 
