@@ -83,6 +83,22 @@ def test_error_pages_are_saved_though_not_cached(server: Server, config: Config)
     assert "Not here" in Path(result.files.text).read_text(encoding="utf-8")
 
 
+def test_refresh_that_gets_an_error_page_drops_the_old_entry(
+    server: Server, config: Config
+) -> None:
+    # The error page overwrites the saved files, so the old entry must not be served with them.
+    server.routes["/flaky"] = server.routes["/html"]
+    ok(server.url("/flaky"), config)
+    server.routes["/flaky"] = server.routes["/captcha"]
+    blocked = ok(server.url("/flaky"), config, refresh=True)
+    assert any(isinstance(issue, BotCheck) for issue in blocked.issues)
+    again = ok(server.url("/flaky"), config)
+    assert not again.from_cache
+    assert again.files is not None
+    assert again.files.text is not None
+    assert "Prove your humanity" in Path(again.files.text).read_text(encoding="utf-8")
+
+
 def test_second_fetch_comes_from_cache_and_refresh_bypasses_it(
     server: Server, config: Config
 ) -> None:

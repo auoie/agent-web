@@ -294,6 +294,10 @@ class PageCache:
         self.prune()
         return path
 
+    def forget(self, url: str, variant: str = "") -> None:
+        with contextlib.suppress(OSError):
+            self.page_path(url, variant).unlink(missing_ok=True)
+
     def save_files(
         self, url: str, variant: str, original: bytes, suffix: str, text: str | None
     ) -> SavedFiles:

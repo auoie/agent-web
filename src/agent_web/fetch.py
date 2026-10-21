@@ -1,4 +1,4 @@
-"""The `web fetch` pipeline: URL → download → convert → detect issues → cache."""
+"""The `web fetch` pipeline: URL → download → convert → detect issues → save files → cache."""
 
 from __future__ import annotations
 
@@ -228,6 +228,9 @@ def fetch(
     result = _save(cache, valid, variant, result, response.content, suffix)
     if cacheable(result):
         cache.store(valid, result, variant)
+    else:
+        # The saved files now hold this page, so an older entry must not be served with them.
+        cache.forget(valid, variant)
     return result
 
 

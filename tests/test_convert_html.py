@@ -125,7 +125,7 @@ def test_icon_permalinks_are_dropped(pandoc: Pandoc) -> None:
     out = md(
         '<h2><a class="anchor" aria-label="Permalink: Install" href="#install">'
         '<svg class="octicon"><path d="M0 0"/></svg></a>Install</h2>'
-        '<h2>Usage<a href="#usage">​<span><svg><path d="M0 0"/></svg></span></a></h2>',
+        '<h2>Usage<a href="#usage">\u200b<span><svg><path d="M0 0"/></svg></span></a></h2>',
         pandoc,
     )
     assert out == "## Install\n\n## Usage"

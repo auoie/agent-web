@@ -59,7 +59,7 @@ _BOILERPLATE_TAGS = frozenset({"nav", "header", "footer", "aside", "menu", "form
 # Text of "permalink to this heading" anchors (Sphinx, MkDocs, GitHub, ...): noise for a reader.
 _PERMALINK_TEXT = frozenset({"¶", "#", "§", "🔗", "link", "permalink", "anchor"})
 # What some sites put in an otherwise empty anchor (Mintlify writes a zero-width space).
-_ZERO_WIDTH = "​‌‍⁠﻿"
+_ZERO_WIDTH = "\u200b\u200c\u200d\u2060\ufeff"
 
 # Inside a heading, pandoc ends the heading at these: layout blocks wrapped around the title
 # (Mintlify uses <div>s) and line breaks. They are unwrapped.

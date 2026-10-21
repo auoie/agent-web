@@ -21,7 +21,7 @@ and conversion problems are reported in `Note:` lines; long output can be read i
 
 ## What it does
 
-- **`web search "query"`** prints Google results (title, URL, snippet) using your browser's signed-in
+- **`web search 'query'`** prints Google results (title, URL, snippet) using your browser's signed-in
   Google session. All Google operators work.
 - **`web fetch URL`** prints the page's own text:
   - **HTML** becomes markdown via pandoc plus a cleanup filter. Layout wrappers and attributes are
@@ -323,8 +323,8 @@ Conventions:
   `src/agent_web/convert/clean.lua` and the lxml pass in `convert/html.py`.
 - **Network tests use a local HTTP server** (`tests/conftest.py`). The Google parser is tested
   against a sanitized real results page.
-- **Bump `FORMAT_VERSION` in `cache.py` whenever conversion output changes,** or results converted
-  by the old code keep being served from the cache for up to an hour.
+- **Bump `FORMAT_VERSION` in `cache.py` whenever conversion output or the cache format changes,**
+  or results converted by the old code keep being served from the cache for up to an hour.
 - **Record what you learn.** Design decisions and their reasons go in `docs/decisions.md`; ideas and
   known issues go in `TODO.md`.
 

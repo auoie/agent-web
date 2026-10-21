@@ -98,9 +98,9 @@ search APIs weren't needed for that; they remain an option for later (see TODO.m
 - libxml2 (lxml) predates HTML5 and, when `<body>` is implicit, puts `<main>`, `<section>` and the
   rest into `<head>`, where pandoc ignores them. The pre-pass moves them back.
 - Block elements (`<div>`, `<p>`, `<section>`, …) and `<br>` inside headings are unwrapped before
-  pandoc, after hidden-text labeling. Otherwise pandoc splits the title into an empty heading and
-  separate paragraphs, drops the heading, or breaks it at the line break, losing section context
-  for `--find`. Spaces preserve word boundaries; inline formatting stays.
+  pandoc, after hidden-text labeling (`20b1570`, `004736a`). Otherwise pandoc splits the title into
+  an empty heading and separate paragraphs, drops the heading, or breaks it at the line break,
+  losing section context for `--find`. Spaces preserve word boundaries; inline formatting stays.
 - If pandoc fails or keeps less than half of the visible text, plain text is shown instead, with a
   note.
 
@@ -136,11 +136,11 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
   The budget caps page text; metadata and added omission markers are extra. `--offset` continues;
   `--find` prints only matching blocks and honors smaller budgets too. Long blocks are windowed
   around the first match, keeping the whole match when it fits and marking omitted text with `…`.
-- **Every fetch is also saved as files**, and the output prints both paths: the full text
-  (`Full text:`), fenced like the printed output and headed by its URL and fetch time, and the
-  response as downloaded (`Original:`). Agents already know `rg`, `sed` and their own file tools,
-  so they can do what `--find` can't (a regex, context lines, the headings, one section) without
-  `web` growing a flag for each. The original lets them check the conversion, e.g. a garbled
+- **Every fetch is also saved as files** (`1129503`), and the output prints both paths: the full
+  text (`Full text:`), fenced like the printed output and headed by its URL and fetch time, and
+  the response as downloaded (`Original:`). Agents already know `rg`, `sed` and their own file
+  tools, so they can do what `--find` can't (a regex, context lines, the headings, one section)
+  without `web` growing a flag for each. The original lets them check the conversion, e.g. a garbled
   table. The page is still printed by default: most fetches are meant to be read, and printing
   only the paths would make each one two calls.
 - Declined: a flag that pipes the text through a command the agent supplies (`--filter 'rg …'`),
@@ -158,7 +158,9 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
 - `FORMAT_VERSION` in `cache.py` is bumped whenever conversion output changes.
 - Saved files (`text/`, `files/`) share the 200 MB limit and are removed oldest first, not after
   an hour, so paths printed earlier usually stay valid. A cache entry whose files are gone is a
-  miss, since its output would point to them.
+  miss, since its output would point to them. A result that isn't cached (an error or block page
+  after `--refresh`) still overwrites the files, so it also removes the page's older entry;
+  otherwise that entry would be served with the error page's files.
 
 ## Code conventions
 
