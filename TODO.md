@@ -31,7 +31,47 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
   periods, refresh ahead of time instead (one headless Firefox run every few minutes while agents
   search).
 - **Pages that need JavaScript** are only flagged. The skill could point the agent to a browser
-  tool as the next step.
+  tool as the next step, or `web fetch --render` could run the page in headless Chrome and convert
+  the result as usual (same notes, untrusted blocks and saved files). A prototype was tested on
+  2026-10-21 and then shelved; what it found:
+  - **Cases it would cover:** apps that are empty until JavaScript runs (Oracle Recruiting on
+    `jobs.akamai.com`), Akamai's and Cloudflare's JavaScript challenges (`evergreenhealth.com`,
+    `careers.inl.gov`), and content inside shadow DOM, which `chrome --dump-dom` misses.
+  - **Driving Chrome needs no library:** `--remote-debugging-pipe` speaks the DevTools protocol
+    over file descriptors 3 and 4 (null-terminated JSON), which `os.posix_spawn` can set up.
+  - **Headless Chrome 156's giveaways and their fixes,** checked on a local page that reports what
+    scripts see:
+    - The user agent says `HeadlessChrome` (careers.pnnl.gov answers 403, Cloudflare challenges
+      it). `Emulation.setUserAgentOverride` with the browser's own client-hint metadata fixes it
+      for the page and its dedicated workers. The `--user-agent` flag fixes the string but empties
+      the detailed client hints (`fullVersionList`), which is its own giveaway. The client-hint
+      brands already say "Google Chrome".
+    - `navigator.webdriver` is true when driven over the pipe:
+      `--disable-blink-features=AutomationControlled`.
+    - The screen is 800×600: `--screen-info={0,0 1920x1080}`.
+    - `outerWidth`/`outerHeight` read 0 if the page loads before the window reports its size:
+      wait for `outerWidth > 0` on `about:blank` first.
+    - WebGL reports the SwiftShader software renderer: `--enable-gpu` reports the real GPU, as a
+      normal Linux Chrome does (+0.5 s startup).
+    - Never call `Runtime.enable` (a known way pages detect DevTools); `Runtime.evaluate` works
+      without it.
+  - **Results with those fixes:** deviceandbrowserinfo.com/are_you_a_bot said "You are human"
+    with every check false (CDP, headless, client hints, workers, iframes), BrowserScan's bot
+    detection was "Normal" throughout, bot.sannysoft.com passed every row, and careers.inl.gov
+    loaded its job search where plain headless Chrome got "Just a moment".
+  - **Cost:** Chrome's start and exit take 0.4 s; a render took about 3.5 s against 1.5 s for a
+    plain fetch, so a long-running Chrome isn't worth it.
+  - **Reading the page:** `DOM.getDocument({depth: -1, pierce: true})` returns open and closed
+    shadow roots (slotted nodes carry `assignedSlot`, slots carry `distributedNodes`) and same-site
+    frames' documents. Cross-site frames are separate targets: auto-attach with `flatten`, match
+    each by the owner element's `frameId` (equal to the target's id), and read its document there.
+  - **Unsolved:** knowing when a page is done (5 of 7 test pages never went network-idle because
+    of ads, analytics and long polling, so it needs the load event, a quiet window that ignores
+    long-lived requests, and a cap); setting the user agent in frames and workers before their
+    scripts run (auto-attach with `waitForDebuggerOnStart`, and browser-level auto-attach for
+    service workers); keeping pages off the local network (the browser fetches subresources
+    itself; a SOCKS5 proxy inside agent-web with `--proxy-bypass-list=<-loopback>` could apply
+    `allow_private_networks`); cookies for `cookie_domains`; and pages that aren't HTML.
 
 ## Known issues
 
