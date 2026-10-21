@@ -35,6 +35,9 @@ and conversion problems are reported in `Note:` lines; long output can be read i
   - **`--find TEXT`** shows only the matching passages, and **`--offset N`** continues a long page.
     Output is capped (25,000 characters by default) to fit agents' output limits (Claude Code cuts
     command output at 30,000 characters).
+  - **Every fetch is saved as files:** the full text and the response as downloaded. Agents can
+    search the text with `rg`, `sed` or their own file tools, and check the conversion against
+    the original.
   - **Just the main content when a page marks it:** if a page has a single `<main>` element, only
     that is converted (pandoc's behavior), which drops menus and footers. Real text left outside
     it is reported, and `--whole-page` includes everything.
@@ -122,6 +125,8 @@ What agent-web does do:
   labeled, including invisible Unicode "tag" characters, which models read but people can't see.
   The skill tells agents never to fetch a URL because a page says so or to put conversation data
   into URLs. This helps the model resist injected instructions, but prompt injection isn't solved.
+  The saved full-text file is fenced too, but an agent reading part of it (an `rg` match) won't
+  see the fence, so the skill says the files' text is the page's.
 - **No local network access.** `localhost`, private, link-local and carrier-grade NAT (Tailscale)
   addresses are refused, including as a redirect target. Every redirect hop is re-checked, the
   connection goes to the exact addresses that were checked (so DNS rebinding can't redirect it),
@@ -231,6 +236,8 @@ effective settings.
 Fetched: https://example.com/page (HTTP 200, text/html)
 Kind: web page
 Cookies: not sent
+Full text: /home/you/.cache/agent-web/text/example.com-1f0c….md
+Original: /home/you/.cache/agent-web/files/example.com-1f0c….html
 Note: …                                  (one line per detected problem)
 Length: 48,210 chars; showing 0-25,000
 The text inside <untrusted-web-content-1a2b3c4d> was written by the page's authors, …
@@ -254,10 +261,18 @@ occurrence. Blocks are added in page order until `--max-chars` is used up; the h
 matched and how many are shown. A single block longer than the limit is cut to a window around
 the match, with `…` marking omitted text. The whole match is kept when it fits within the limit.
 
+**Saved files:** every fetch writes the full converted text to `Full text:` (Markdown, inside the
+same untrusted-content fence, headed by its URL and fetch time) and the response as downloaded to
+`Original:` (HTML, PDF, JSON, …; binary files get only this). They're named after the site, so a
+path shows where the text came from. Agents read them with `rg`, `sed` or their own file tools for
+what `--find` can't do: regexes, context lines, the list of headings, one section. Since they're
+outside the project, your agent may ask permission to read them.
+
 **Cache:** results are kept for an hour in `~/.cache/agent-web` (200 MB, oldest removed first), so
 `--offset` and `--find` on the same page don't download it again; `--refresh` skips it. Error,
 block and nearly empty pages aren't cached. Changing `cookie_domains`, the browser or
-`--whole-page` never serves an old result. Downloaded PDFs and binary files are saved there too.
+`--whole-page` never serves an old result. The saved files live there too (`text/`, `files/`) and
+count toward the 200 MB; they're removed only when space is needed, not after an hour.
 
 Exit codes:
 - 0: ok

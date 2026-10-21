@@ -34,6 +34,7 @@ from agent_web.model import (
     PlainText,
     RedditThread,
 )
+from agent_web.output import saved_text
 from agent_web.sites import github, reddit
 from agent_web.urls import domain_matches, hostname, validate_url
 
@@ -70,6 +71,18 @@ def classify(response: HttpResponse) -> Kind:
     return "binary"
 
 
+def _original_suffix(kind: Kind, content_type: str) -> str:
+    match kind:
+        case "html":
+            return ".html"
+        case "pdf":
+            return ".pdf"
+        case "text":
+            return ".txt"
+        case "binary":
+            return "." + (content_type.split(";")[0].split("/")[-1] or "bin")[:10]
+
+
 def _meta(url: str, response: HttpResponse, now: float) -> Meta:
     return Meta(
         url=url,
@@ -84,7 +97,6 @@ def _meta(url: str, response: HttpResponse, now: float) -> Meta:
 def _convert(
     url: str,
     response: HttpResponse,
-    cache: PageCache,
     pandoc: Callable[[], Pandoc | ToolMissing],
     now: float,
     whole_page: bool = False,
@@ -92,16 +104,13 @@ def _convert(
     meta = _meta(url, response, now)
     match classify(response):
         case "pdf":
-            saved = cache.save_file(url, response.content, ".pdf")
             converted = convert_pdf(response.content)
             if isinstance(converted, PdfUnreadable):
                 issues: list[Issue] = [ConversionFallback(f"PDF unreadable: {converted.reason}")]
                 if response.status >= 400:
                     issues.insert(0, HttpErrorStatus(response.status))
-                return PdfDocument(meta, markdown="", pages=0, saved_to=str(saved)), issues
-            content = PdfDocument(
-                meta, markdown=converted.markdown, pages=converted.pages, saved_to=str(saved)
-            )
+                return PdfDocument(meta, markdown="", pages=0), issues
+            content = PdfDocument(meta, markdown=converted.markdown, pages=converted.pages)
             return content, detect.pdf_issues(
                 status=response.status, pages=converted.pages, text_chars=converted.text_chars
             )
@@ -129,15 +138,14 @@ def _convert(
             issues = [HttpErrorStatus(response.status)] if response.status >= 400 else []
             return PlainText(meta, text=text), issues
         case "binary":
-            suffix = "." + (response.content_type.split(";")[0].split("/")[-1] or "bin")[:10]
-            saved = cache.save_file(url, response.content, suffix)
             issues = [HttpErrorStatus(response.status)] if response.status >= 400 else []
-            return BinaryFile(meta, saved_to=str(saved), size=len(response.content)), issues
+            return BinaryFile(meta, size=len(response.content)), issues
 
 
 def _try_reddit(
     url: str, post_id: str, config: Config, source: CookieSource, now: float
-) -> RedditThread | None:
+) -> tuple[RedditThread, bytes] | None:
+    """The thread and the JSON it was rendered from."""
     response = download(
         reddit.json_url(post_id),
         timeout=config.timeout,
@@ -151,13 +159,14 @@ def _try_reddit(
     rendered = reddit.parse_and_render(response.content)
     if rendered is None:
         return None
-    return RedditThread(
+    thread = RedditThread(
         _meta(url, response, now),
         title=rendered.title,
         markdown=rendered.markdown,
         comments=rendered.comments,
         not_loaded=rendered.not_loaded,
     )
+    return thread, response.content
 
 
 def fetch(
@@ -185,9 +194,11 @@ def fetch(
     issues: list[Issue] = []
 
     if (post_id := reddit.thread_id(valid)) is not None:
-        thread = _try_reddit(valid, post_id, config, source, now())
-        if thread is not None:
+        found = _try_reddit(valid, post_id, config, source, now())
+        if found is not None:
+            thread, original = found
             result = FetchResult(*reveal_invisible(thread, []))
+            result = _save(cache, valid, variant, result, original, ".json")
             cache.store(valid, result, variant)
             return result
 
@@ -201,7 +212,7 @@ def fetch(
     )
     if not isinstance(response, HttpResponse):
         return response
-    converted = _convert(valid, response, cache, find, now(), whole_page)
+    converted = _convert(valid, response, find, now(), whole_page)
     if isinstance(converted, ToolMissing):
         return converted
     content, found_issues = reveal_invisible(*converted)
@@ -213,9 +224,19 @@ def fetch(
         issues.append(CookiesMightHelp(host.removeprefix("www.")))
 
     result = FetchResult(content, tuple(issues))
+    suffix = _original_suffix(classify(response), response.content_type)
+    result = _save(cache, valid, variant, result, response.content, suffix)
     if cacheable(result):
         cache.store(valid, result, variant)
     return result
+
+
+def _save(
+    cache: PageCache, url: str, variant: str, result: FetchResult, original: bytes, suffix: str
+) -> FetchResult:
+    """Write the fetch to disk (see SavedFiles), whether or not the result is cached."""
+    text = None if isinstance(result.content, BinaryFile) else saved_text(result.content)
+    return replace(result, files=cache.save_files(url, variant, original, suffix, text))
 
 
 def reveal_invisible(content: Content, issues: list[Issue]) -> tuple[Content, tuple[Issue, ...]]:

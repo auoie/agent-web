@@ -102,7 +102,7 @@ search APIs weren't needed for that; they remain an option for later (see TODO.m
 
 ## PDFs
 
-- pymupdf4llm, no OCR, with `--- Page N ---` markers; the original is saved and its path shown.
+- pymupdf4llm, no OCR, with `--- Page N ---` markers; the original PDF is saved like any download.
   pymupdf is AGPL, hence the project's license.
 - Every PDF gets a note that tables and formulas can be garbled. Table structure is the weakest
   spot (wrong columns on the Attention paper's Table 2). Docling scores far better in a
@@ -132,6 +132,18 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
   The budget caps page text; metadata and added omission markers are extra. `--offset` continues;
   `--find` prints only matching blocks and honors smaller budgets too. Long blocks are windowed
   around the first match, keeping the whole match when it fits and marking omitted text with `…`.
+- **Every fetch is also saved as files**, and the output prints both paths: the full text
+  (`Full text:`), fenced like the printed output and headed by its URL and fetch time, and the
+  response as downloaded (`Original:`). Agents already know `rg`, `sed` and their own file tools,
+  so they can do what `--find` can't (a regex, context lines, the headings, one section) without
+  `web` growing a flag for each. The original lets them check the conversion, e.g. a garbled
+  table. The page is still printed by default: most fetches are meant to be read, and printing
+  only the paths would make each one two calls.
+- Declined: a flag that pipes the text through a command the agent supplies (`--filter 'rg …'`),
+  which would keep its output inside the fence. People allow `web fetch` as a read-only command,
+  and the flag would let it run any command without approval (even `rg --pre`, `sed`'s `e` and
+  `awk`'s `system()` run programs). Reading the saved file loses the fence from view instead; the
+  skill tells agents the file's text is the page's.
 
 ## Cache
 
@@ -140,6 +152,9 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
 - The key includes whether (and from which browser) cookies are sent and `--whole-page`, so
   changing those settings never serves an old result.
 - `FORMAT_VERSION` in `cache.py` is bumped whenever conversion output changes.
+- Saved files (`text/`, `files/`) share the 200 MB limit and are removed oldest first, not after
+  an hour, so paths printed earlier usually stay valid. A cache entry whose files are gone is a
+  miss, since its output would point to them.
 
 ## Code conventions
 

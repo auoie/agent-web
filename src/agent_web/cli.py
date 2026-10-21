@@ -21,6 +21,8 @@ Search the web and read source text without an intermediate AI summary.
 
 HTML becomes Markdown; PDF text is reconstructed from page layout. Read Note: lines
 for detected omissions and conversion problems, and use --offset to continue long output.
+Each fetch also saves the full text and the original response: the Full text: and Original:
+lines give their paths, for rg, sed or your own file tools.
 
   web search 'QUERY' [-n 10]      Google results: title, URL, snippet
   web fetch URL [--find TEXT]     the page's own text (HTML -> markdown, PDF -> text)

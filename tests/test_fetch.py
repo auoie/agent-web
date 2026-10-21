@@ -23,13 +23,13 @@ from agent_web.model import (
     PlainText,
     RedditThread,
 )
-from conftest import FIXTURES, Route, Server, requires_pandoc
+from conftest import FIXTURES, HTML_PAGE, Route, Server, requires_pandoc
 
 pytestmark = requires_pandoc
 
 
-def ok(url: str, config: Config, *, refresh: bool = False) -> FetchResult:
-    result = fetch(url, config, refresh=refresh)
+def ok(url: str, config: Config, *, refresh: bool = False, whole_page: bool = False) -> FetchResult:
+    result = fetch(url, config, refresh=refresh, whole_page=whole_page)
     assert isinstance(result, FetchResult), result
     return result
 
@@ -57,6 +57,30 @@ def test_html_page(server: Server, config: Config) -> None:
     assert result.content.markdown == "# Hello\n\nSome **content** here."
     assert result.issues == ()
     assert not result.from_cache
+
+
+def test_fetch_saves_full_text_and_original(server: Server, config: Config) -> None:
+    result = ok(server.url("/html"), config)
+    assert result.files is not None
+    assert result.files.text is not None
+    assert Path(result.files.original).read_bytes() == HTML_PAGE
+    assert Path(result.files.original).name.startswith("127.0.0.1-")
+    saved = Path(result.files.text).read_text(encoding="utf-8")
+    assert saved.startswith(f"Fetched: {server.url('/html')} at ")
+    assert (
+        "Title: Test page\n\n# Hello\n\nSome **content** here.\n</untrusted-web-content-" in saved
+    )
+    assert ok(server.url("/html"), config).files == result.files
+    whole = ok(server.url("/html"), config, whole_page=True).files
+    assert whole is not None
+    assert whole.text != result.files.text
+
+
+def test_error_pages_are_saved_though_not_cached(server: Server, config: Config) -> None:
+    result = ok(server.url("/notfound"), config)
+    assert result.files is not None
+    assert result.files.text is not None
+    assert "Not here" in Path(result.files.text).read_text(encoding="utf-8")
 
 
 def test_second_fetch_comes_from_cache_and_refresh_bypasses_it(
@@ -125,7 +149,10 @@ def test_pdf(server: Server, config: Config) -> None:
     assert content.pages == 2
     assert "--- Page 2 ---" in content.markdown
     assert "Second page text" in content.markdown
-    assert Path(content.saved_to).read_bytes().startswith(b"%PDF")
+    assert result.files is not None
+    assert Path(result.files.original).read_bytes().startswith(b"%PDF")
+    assert result.files.text is not None
+    assert "Second page text" in Path(result.files.text).read_text(encoding="utf-8")
     assert PdfLayoutWarning() in result.issues
 
 
@@ -134,9 +161,11 @@ def test_text_json_binary_and_sniffing(server: Server, config: Config) -> None:
     assert isinstance(text, PlainText)
     assert text.text == "plain words"
     assert isinstance(ok(server.url("/json"), config).content, PlainText)
-    binary = ok(server.url("/binary"), config).content
-    assert isinstance(binary, BinaryFile)
-    assert Path(binary.saved_to).suffix == ".png"
+    binary = ok(server.url("/binary"), config)
+    assert isinstance(binary.content, BinaryFile)
+    assert binary.files is not None
+    assert binary.files.text is None
+    assert Path(binary.files.original).suffix == ".png"
     assert isinstance(ok(server.url("/no-type-html"), config).content, HtmlPage)
 
 
@@ -168,6 +197,12 @@ def test_reddit_thread_via_json(
     assert isinstance(result.content, RedditThread)
     assert result.content.comments == 4
     assert "u/Comfortable-Hall-188" in result.content.markdown
+    assert result.files is not None
+    assert result.files.original.endswith(".json")
+    assert (
+        Path(result.files.original).read_bytes()
+        == (FIXTURES / "reddit" / "thread.json").read_bytes()
+    )
 
 
 def test_blocked_reddit_thread_suggests_cookies(

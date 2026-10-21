@@ -1,4 +1,5 @@
-"""Per-URL cache of fetch results (JSON files) plus saved originals (PDFs, binary files).
+"""Per-URL cache of fetch results (JSON files), plus each fetch's full text and original response
+saved as files for agents to read with their own tools.
 
 Results are stored as tagged JSON and decoded back into the model's sum types. Anything that
 doesn't decode cleanly is treated as a cache miss.
@@ -10,6 +11,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 from collections.abc import Callable
@@ -37,11 +39,13 @@ from agent_web.model import (
     PdfLayoutWarning,
     PlainText,
     RedditThread,
+    SavedFiles,
     ScannedPdf,
 )
+from agent_web.urls import hostname
 
 # Bump whenever conversion output changes, so results from older converters become misses.
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 
 
 def url_key(url: str, variant: str = "") -> str:
@@ -49,6 +53,13 @@ def url_key(url: str, variant: str = "") -> str:
     cookies were allowed), so changing that setting never serves the old result."""
     material = f"{url}\n{variant}" if variant else url
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+
+
+def file_stem(url: str, variant: str = "") -> str:
+    """Saved files start with the site's name, so a path (or a search across files) shows where
+    the text came from."""
+    site = re.sub(r"[^a-z0-9.-]", "_", hostname(url))[:100] or "page"
+    return f"{site}-{url_key(url, variant)}"
 
 
 class _Bad(Exception):
@@ -131,6 +142,7 @@ def encode(result: FetchResult) -> dict[str, object]:
         "version": FORMAT_VERSION,
         "content": _encode_content(result.content),
         "issues": [_encode_issue(i) for i in result.issues],
+        "files": asdict(result.files) if result.files else None,
     }
 
 
@@ -154,12 +166,7 @@ def _decode_content(data: dict[str, object]) -> Content:
         case "html":
             return HtmlPage(meta, title=_str(data, "title"), markdown=_str(data, "markdown"))
         case "pdf":
-            return PdfDocument(
-                meta,
-                markdown=_str(data, "markdown"),
-                pages=_int(data, "pages"),
-                saved_to=_str(data, "saved_to"),
-            )
+            return PdfDocument(meta, markdown=_str(data, "markdown"), pages=_int(data, "pages"))
         case "reddit":
             return RedditThread(
                 meta,
@@ -171,7 +178,7 @@ def _decode_content(data: dict[str, object]) -> Content:
         case "text":
             return PlainText(meta, text=_str(data, "text"))
         case "binary":
-            return BinaryFile(meta, saved_to=_str(data, "saved_to"), size=_int(data, "size"))
+            return BinaryFile(meta, size=_int(data, "size"))
         case other:
             raise _Bad(f"content type {other}")
 
@@ -202,6 +209,18 @@ def _decode_issue(data: dict[str, object]) -> Issue:
             raise _Bad(f"issue type {other}")
 
 
+def _decode_files(payload: object) -> SavedFiles | None:
+    if payload is None:
+        return None
+    data = as_dict(payload)
+    if data is None:
+        raise _Bad("files")
+    text = data.get("text")
+    if text is not None and not isinstance(text, str):
+        raise _Bad("text")
+    return SavedFiles(original=_str(data, "original"), text=text)
+
+
 def decode(payload: object) -> FetchResult | None:
     data = as_dict(payload)
     if data is None or data.get("version") != FORMAT_VERSION:
@@ -217,7 +236,8 @@ def decode(payload: object) -> FetchResult | None:
             if issue_data is None:
                 return None
             issues.append(_decode_issue(issue_data))
-        return FetchResult(_decode_content(content_data), tuple(issues))
+        content = _decode_content(content_data)
+        return FetchResult(content, tuple(issues), files=_decode_files(data.get("files")))
     except _Bad:
         return None
 
@@ -241,7 +261,12 @@ class PageCache:
 
     @property
     def files_dir(self) -> Path:
+        """Originals, as downloaded."""
         return self.directory / "files"
+
+    @property
+    def text_dir(self) -> Path:
+        return self.directory / "text"
 
     def page_path(self, url: str, variant: str = "") -> Path:
         return self.pages_dir / f"{url_key(url, variant)}.json"
@@ -257,6 +282,10 @@ class PageCache:
         result = decode(payload)
         if result is None or result.content.meta.url != url:
             return None
+        # The output points the agent at the saved files, so they must still exist (see prune).
+        files = result.files
+        if files is None or not all(Path(p).is_file() for p in (files.original, files.text) if p):
+            return None
         return replace(result, from_cache=True)
 
     def store(self, url: str, result: FetchResult, variant: str = "") -> Path:
@@ -265,15 +294,24 @@ class PageCache:
         self.prune()
         return path
 
-    def save_file(self, url: str, data: bytes, suffix: str) -> Path:
-        path = self.files_dir / f"{url_key(url)}{suffix}"
-        _atomic_write(path, data)
-        return path
+    def save_files(
+        self, url: str, variant: str, original: bytes, suffix: str, text: str | None
+    ) -> SavedFiles:
+        """Write the original response and (unless it's a binary file) the full text."""
+        stem = file_stem(url, variant)
+        original_path = self.files_dir / f"{stem}{suffix}"
+        _atomic_write(original_path, original)
+        text_path = None
+        if text is not None:
+            text_path = self.text_dir / f"{stem}.md"
+            _atomic_write(text_path, text.encode("utf-8"))
+        self.prune()
+        return SavedFiles(original=str(original_path), text=str(text_path) if text_path else None)
 
     def prune(self) -> None:
         """Delete the oldest entries once the cache is over its size limit."""
         entries: list[tuple[float, int, Path]] = []
-        for folder in (self.pages_dir, self.files_dir):
+        for folder in (self.pages_dir, self.files_dir, self.text_dir):
             if not folder.is_dir():
                 continue
             for path in folder.iterdir():

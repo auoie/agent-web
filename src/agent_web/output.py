@@ -9,6 +9,7 @@ import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import assert_never
 from urllib.parse import urlsplit
 
@@ -52,9 +53,9 @@ def body(content: Content) -> str:
             return text
         case PlainText(text=text):
             return text
-        case BinaryFile(meta, saved_to, size):
+        case BinaryFile(meta, size):
             mime = meta.content_type or "unknown type"
-            return f"[Binary file ({mime}, {size:,} bytes) saved to {saved_to}. Not shown.]"
+            return f"[Binary file ({mime}, {size:,} bytes), not shown: see the Original: line.]"
         case _:
             assert_never(content)
 
@@ -63,8 +64,8 @@ def kind_line(content: Content) -> str:
     match content:
         case HtmlPage():
             return "web page"
-        case PdfDocument(pages=pages, saved_to=saved):
-            return f"PDF, {pages} pages (original saved to {saved})"
+        case PdfDocument(pages=pages):
+            return f"PDF, {pages} pages"
         case RedditThread(comments=comments, not_loaded=missing):
             extra = f", {missing} more not loaded" if missing else ""
             return f"Reddit thread, {comments} comments loaded{extra}"
@@ -211,13 +212,17 @@ def _age(seconds: float) -> str:
     return f"{seconds / 3600:.1f} h ago"
 
 
+def _source(content: Content) -> str:
+    """The URL the text came from: after redirects, or the thread's own URL for Reddit."""
+    if isinstance(content, RedditThread):
+        return f"{content.meta.url} via Reddit's JSON API"
+    return content.meta.final_url
+
+
 def _fetched_line(result: FetchResult, now: float) -> str:
     meta = result.content.meta
     details = f"HTTP {meta.status}, {meta.content_type or 'no content-type'}"
-    if isinstance(result.content, RedditThread):
-        line = f"Fetched: {meta.url} via Reddit's JSON API ({details})"
-    else:
-        line = f"Fetched: {meta.final_url} ({details})"
+    line = f"Fetched: {_source(result.content)} ({details})"
     if result.from_cache:
         line += f" [from cache, fetched {_age(now - meta.fetched_at)}; --refresh fetches it again]"
     return line
@@ -238,6 +243,10 @@ def render_fetch(
     lines = [_fetched_line(result, now())]
     lines.append(f"Kind: {kind_line(content)}")
     lines.append(f"Cookies: {_cookie_line(result)}")
+    if files := result.files:
+        if files.text:
+            lines.append(f"Full text: {files.text}")
+        lines.append(f"Original: {files.original}")
     lines += [f"Note: {describe_issue(issue)}" for issue in result.issues]
     tag = fence()
     quoted_url = shlex.quote(meta.url)
@@ -287,6 +296,8 @@ def fetch_json(result: FetchResult, *, offset: int, max_chars: int, find: str | 
         "from_cache": result.from_cache,
         "notes": [describe_issue(issue) for issue in result.issues],
         "length": len(text),
+        "full_text_file": result.files.text if result.files else None,
+        "original_file": result.files.original if result.files else None,
     }
     if find is not None:
         passages, total = find_passages(text, find, max_chars)
@@ -297,6 +308,17 @@ def fetch_json(result: FetchResult, *, offset: int, max_chars: int, find: str | 
         end = min(len(text), start + max_chars)
         payload.update(offset=start, end=end, text=text[start:end])
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def saved_text(content: Content, fence: Callable[[], str] = new_fence) -> str:
+    """The full text as written to its file: fenced like the printed output, with its source."""
+    tag = fence()
+    when = datetime.fromtimestamp(content.meta.fetched_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [f"Fetched: {_source(content)} at {when}", UNTRUSTED_NOTE.format(fence=tag), f"<{tag}>"]
+    if title := title_of(content):
+        lines += [f"Title: {title}", ""]
+    lines += [body(content), f"</{tag}>", ""]
+    return "\n".join(lines)
 
 
 def render_search(results: SearchResults, fence: Callable[[], str] = new_fence) -> str:

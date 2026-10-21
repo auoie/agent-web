@@ -5,16 +5,11 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
 
 ## Ideas
 
-- **Outline mode:** a flag that prints only a page's headings with their offsets, so an agent can
-  jump to a section with `--offset`.
-- **Section links:** for a URL with a `#fragment`, return just that section instead of the page
-  from the top.
-- **Context around `--find` matches:** also show the block before and after each matching block,
-  merging overlaps, within the same `--max-chars` budget, and say how many matches that leaves
-  out. A match is often a heading, or a sentence whose meaning depends on its neighbors ("this
-  approach", a caveat that follows). `--find 'Security Considerations'` on the MCP spec's tools
-  page returns the table of contents and the bare heading; reading the section takes another call
-  with `--offset`.
+- **Outline mode, section links (`#fragment`), context around `--find` matches:** for now agents
+  do these with `rg` and `sed` on the saved full-text file (`rg -n '^#'`, `rg -A 8 '^## Heading'`,
+  `rg -C 3`). Build them into `web` only if agents keep missing that. The case that prompted the
+  context idea: `--find 'Security Considerations'` on the MCP spec's tools page returns the table
+  of contents and the bare heading, not the section.
 - **PDF tables:** pymupdf garbles some tables (wrong columns on the Attention paper's Table 2). An
   opt-in engine such as Docling would be more accurate but is heavy (GBs of models). For now, have
   the agent use a PDF-specific tool when tables matter.

@@ -29,7 +29,6 @@ class PdfDocument:
     meta: Meta
     markdown: str
     pages: int
-    saved_to: str
 
 
 @dataclass(frozen=True)
@@ -50,7 +49,6 @@ class PlainText:
 @dataclass(frozen=True)
 class BinaryFile:
     meta: Meta
-    saved_to: str
     size: int
 
 
@@ -123,7 +121,16 @@ Issue = (
 
 
 @dataclass(frozen=True)
+class SavedFiles:
+    """Where a fetch was written to disk, for agents to read with their own tools."""
+
+    original: str  # the response body as downloaded
+    text: str | None  # the full text, fenced like the printed output; None for binary files
+
+
+@dataclass(frozen=True)
 class FetchResult:
     content: Content
     issues: tuple[Issue, ...]
     from_cache: bool = False
+    files: SavedFiles | None = None
