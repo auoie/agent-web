@@ -295,8 +295,10 @@ title and text in untrusted-content blocks like the output, headed by its URL an
 the response as downloaded to `Original:` (HTML, PDF, JSON, …; binary files get only this).
 They're named after the site, so a path shows where the text came from. Agents read them with
 `rg`, `sed` or their own file tools for what `--find` can't do: regexes, context lines, the list
-of headings, one section. Since they're outside the project, your agent may ask permission to
-read them; [Install](#install) has a rule for each agent.
+of headings, one section. `F=$(web fetch URL --path)` fetches a page and keeps the full text's
+path (`--original-path` for the original); notes still go to stderr. Since the files are outside
+the project, your agent may ask permission to read them; [Install](#install) has a rule for each
+agent.
 
 **Cache:** results are kept for an hour in `~/.cache/agent-web` (200 MB, oldest removed first), so
 `--offset` and `--find` on the same page don't download it again; `--refresh` skips it. Error,

@@ -84,6 +84,40 @@ def test_fetch_options(server: Server) -> None:
     assert "# Hello" not in out
 
 
+@requires_pandoc
+@pytest.mark.usefixtures("local_ok")
+def test_fetch_path_prints_only_the_saved_file(server: Server) -> None:
+    code, out, err = run_cli("fetch", server.url("/html"), "--path")
+    assert (code, err) == (0, "")
+    text = Path(out.strip())
+    assert out == f"{text}\n"
+    assert text.suffix == ".md"
+    assert "# Hello" in text.read_text(encoding="utf-8")
+    code, out, _ = run_cli("fetch", server.url("/html"), "--original-path")
+    assert code == 0
+    assert Path(out.strip()).read_bytes().startswith(b"<!doctype html>")
+    # Notes still reach the agent, on stderr, and the exit code is unchanged.
+    code, out, err = run_cli("fetch", server.url("/notfound"), "--path")
+    assert code == 3
+    assert Path(out.strip()).is_file()
+    assert err.startswith("Note: the server answered HTTP 404")
+    code, out, err = run_cli("fetch", server.url("/binary"), "--path")
+    assert code == 0
+    assert out.strip().endswith(".png")
+    assert "a binary file has no text" in err
+
+
+@requires_pandoc
+@pytest.mark.usefixtures("local_ok")
+@pytest.mark.parametrize(
+    "extra", [["--find", "x"], ["--offset", "5"], ["--max-chars", "0"], ["--json"]]
+)
+def test_fetch_path_takes_no_output_options(server: Server, extra: list[str]) -> None:
+    code, out, err = run_cli("fetch", server.url("/html"), "--path", *extra)
+    assert (code, out) == (1, "")
+    assert err.startswith("web: ")
+
+
 def test_fetch_failures() -> None:
     code, _, err = run_cli("fetch", "ftp://example.com/x")
     assert code == 1

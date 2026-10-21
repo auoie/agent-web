@@ -89,7 +89,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="convert the entire page, not just its <main> element (when it has exactly one)",
     )
-    fetch.add_argument("--json", action="store_true", help="print JSON instead of text")
+    output = fetch.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="print JSON instead of text")
+    output.add_argument(
+        "--path",
+        action="store_true",
+        help="print only the saved full text's path (notes go to stderr), for F=$(web fetch URL "
+        "--path)",
+    )
+    output.add_argument(
+        "--original-path",
+        action="store_true",
+        help="print only the path of the response as downloaded (notes go to stderr)",
+    )
 
     commands.add_parser("doctor", help="check pandoc, config and browser cookies")
 
@@ -121,17 +133,37 @@ def _search(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) 
 def _fetch(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) -> int:
     from agent_web.fetch import fetch
     from agent_web.model import FetchResult
-    from agent_web.output import exit_code_for, fetch_json, render_fetch
+    from agent_web.output import describe_issue, exit_code_for, fetch_json, render_fetch
 
     max_chars = config.max_chars if args.max_chars is None else int(args.max_chars)
     if max_chars < 0 or int(args.offset) < 0:
         print("web: --max-chars and --offset can't be negative", file=err)
+        return EXIT_USAGE
+    path_only = bool(args.path or args.original_path)
+    if path_only and (args.find or args.offset or args.max_chars is not None):
+        print(
+            "web: --path and --original-path print only a file path, so --find, --offset and "
+            "--max-chars don't apply",
+            file=err,
+        )
         return EXIT_USAGE
     outcome = fetch(
         str(args.url), config, refresh=bool(args.refresh), whole_page=bool(args.whole_page)
     )
     if not isinstance(outcome, FetchResult):
         return _fail(outcome, err)
+    if path_only:
+        # Only the path on stdout, so F=$(web fetch URL --path) captures it; the notes still
+        # reach the agent on stderr.
+        for issue in outcome.issues:
+            print(f"Note: {describe_issue(issue)}", file=err)
+        files = outcome.files
+        if files is None:
+            raise RuntimeError("fetch() saves every result")  # a bug, not an expected failure
+        if args.path and files.text is None:
+            print("web: a binary file has no text; this is the downloaded file", file=err)
+        print(files.text if args.path and files.text else files.original, file=out)
+        return exit_code_for(outcome)
     find = str(args.find) if args.find else None
     if args.json:
         print(fetch_json(outcome, offset=args.offset, max_chars=max_chars, find=find), file=out)

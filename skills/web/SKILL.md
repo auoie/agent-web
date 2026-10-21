@@ -43,6 +43,9 @@ search tools, which may hand you another model's summary or a lossy conversion.
   - `--whole-page`: show the entire page. By default, when a page marks its main content (an
     HTML `<main>` element), only that part is shown, without the site's menus, header and footer.
     If other text was left out, a `Note:` says how much; add this flag if you might need it.
+  - `--path` / `--original-path`: print only the path of the saved full text / of the response
+    as downloaded, for use in the same command: `F=$(web fetch URL --path)`. Notes about the page
+    still appear (on stderr), and the exit code is the same.
   - `--json`: the same result as JSON, for scripts. You don't normally need it.
 - `web doctor`: check the setup (pandoc, the config file, the Google sign-in). Run it when a
   command fails with exit code 1 and the message suggests a setup problem.
@@ -79,21 +82,19 @@ last hour; add `--refresh` if it may have changed since.
 Every fetch writes two files, whatever part of the page was printed. The paths are absolute.
 
 - **`Full text:`** all of the page's text as Markdown, in untrusted-content blocks like the output.
-  Read it with your own tools when `--find` isn't enough (FILE is the path on that line):
+  Read it with your own tools when `--find` isn't enough:
 
   ```bash
-  rg -n '^#' FILE                                 # the page's headings, with line numbers
-  rg -n -A 8 '^## Security Considerations' FILE   # a heading and the text under it
-  rg -n -i -C 3 'timeout|retry' FILE              # a regex, with 3 lines of context
-  sed -n '120,180p' FILE                          # lines 120-180 (or your file-reading tool)
+  F=$(web fetch URL --path)                       # fetch, keeping the full text's path in F
+  rg -n '^#' "$F"                                 # the page's headings, with line numbers
+  rg -n -A 8 '^## Security Considerations' "$F"   # a heading and the text under it
+  rg -n -i -C 3 'timeout|retry' "$F"              # a regex, with 3 lines of context
+  sed -n '120,180p' "$F"                          # lines 120-180 (or your file-reading tool)
   ```
 
 - **`Original:`** the response exactly as downloaded (HTML, PDF, JSON, an image, …). Check it
   when the converted text looks wrong, such as a garbled table, or read a PDF with a PDF tool.
-  Binary files have only this one.
-
-To save a page and get its paths without reading it yet, use `web fetch URL --max-chars 0` and
-take the path from its `Full text:` line.
+  Binary files have only this one. `web fetch URL --original-path` prints its path.
 
 The files are kept until the cache needs the space, so paths from earlier in the session
 normally still work; if one is gone, fetch the page again.

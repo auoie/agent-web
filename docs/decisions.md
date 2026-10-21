@@ -183,6 +183,11 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
   `web fetch URL --max-chars 500 >/dev/null; F=$(ls -t …/text/site-* | head -1)` (15 times in one
   research session), which drops the notes and can pick the wrong page: a cache hit doesn't
   rewrite the file, and parallel agents write to the same folder.
+- **`--path` and `--original-path` print only a saved file's path**, with the notes on stderr and
+  the usual exit code, for `F=$(web fetch URL --path)`. Agents given `--max-chars 0` still threw
+  its output away and guessed with `ls -t` (43 times in the next 15 minutes), because they wanted
+  the path in a shell variable inside one command. A `sed` or `jq` one-liner would hide the
+  notes.
 - Declined: a flag that pipes the text through a command the agent supplies (`--filter 'rg …'`),
   which would keep its output inside the fence. People allow `web fetch` as a read-only command,
   and the flag would let it run any command without approval (even `rg --pre`, `sed`'s `e` and
