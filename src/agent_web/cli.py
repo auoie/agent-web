@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
+from datetime import UTC, datetime
 from typing import TextIO
 
 from agent_web import __version__
@@ -232,12 +234,25 @@ def _doctor(config: Config, out: TextIO) -> int:
             file=out,
         )
     for line in recent_refreshes(config):
-        print(f"google:   refresh {line}", file=out)
+        print(f"google:   {_refresh_line(line, time.time())}", file=out)
     problems += _doctor_brave(config, out, last_quota(config))
     domains = ", ".join(config.cookie_domains) or "(none: every fetch is anonymous)"
     print(f"cookies:  sent on fetch to: {domains}", file=out)
     print(f"cache:    {config.cache_dir}", file=out)
     return EXIT_USAGE if problems else EXIT_OK
+
+
+def _refresh_line(line: str, now: float) -> str:
+    """A refresh log line ("2026-10-21 20:35:54 UTC  what happened") with how long ago it was, so
+    an old failure doesn't read as the current state."""
+    stamp, _, what = line.partition(" UTC  ")
+    try:
+        when = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).timestamp()
+    except ValueError:
+        return f"past refresh: {line}"
+    minutes = max(0, int(now - when) // 60)
+    ago = f"{minutes} min" if minutes < 120 else f"{minutes // 60} h"
+    return f"past refresh, {ago} ago ({stamp[11:16]} UTC): {what}"
 
 
 def _doctor_brave(config: Config, out: TextIO, quota: str | None) -> int:

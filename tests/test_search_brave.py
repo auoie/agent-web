@@ -79,8 +79,14 @@ def test_one_request_per_page_with_the_key_and_no_cookies(config: Config) -> Non
     assert kwargs["extra_headers"] == {"X-Subscription-Token": "KEY", "Accept": "application/json"}
     assert "cookie_source" not in kwargs
     assert last_quota(config) == (
-        "limits 50, 0 (per second, per month); remaining 49, 0 at 00:00 UTC"
+        "up to 50 searches a second, no monthly cap: searches are paid from credit "
+        "(usage: api-dashboard.search.brave.com), as of 00:00 UTC"
     )
+    capped = answer(
+        200, RESULTS, {"x-ratelimit-limit": "1, 2000", "x-ratelimit-remaining": "1, 1500"}
+    )
+    search("q", 1, config, "KEY", downloader=Downloads(capped), now=lambda: 0.0)
+    assert last_quota(config) == "1500 of 2000 searches left this month, as of 00:00 UTC"
 
 
 def test_too_many_requests_at_once_are_retried(config: Config) -> None:

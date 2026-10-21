@@ -312,9 +312,7 @@ def test_a_refresh_that_doesnt_help_pauses(config: Config) -> None:
     outcome, _ = refreshing_search(config, [JS_CHECK, JS_CHECK], refresher, limiter)
     assert outcome == JavaScriptWall("Google")
     assert limiter.pauses == [("its JavaScript check", 600)]
-    assert refresher.lines == [
-        "headless firefox, 0.9 s; the retry got JavaScriptWall(service='Google')"
-    ]
+    assert refresher.lines == ["headless firefox, 0.9 s; the retry got the JavaScript check again"]
 
 
 def test_a_failed_refresh_pauses(config: Config) -> None:

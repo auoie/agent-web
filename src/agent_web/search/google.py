@@ -275,6 +275,21 @@ def _attempt(
     return found if problem is None else problem
 
 
+def _retry_result(outcome: list[SearchResult] | Failure) -> str:
+    """How the retry after a refresh went, for the refresh log."""
+    match outcome:
+        case list():
+            return "got results"
+        case Captcha():
+            return "got a captcha"
+        case JavaScriptWall():
+            return "got the JavaScript check again"
+        case SearchBudgetUsed():
+            return "wasn't sent: the Google budget was used up"
+        case _:
+            return f"failed: {type(outcome).__name__}"
+
+
 def search(
     query: str,
     page: int,
@@ -316,8 +331,7 @@ def search(
         else:
             retry_cookies = overlay(cookies, refreshed.cookies)
             outcome = _attempt(url, config, retry_cookies, downloader, limiter, budget_wait, sleep)
-            result = "got results" if isinstance(outcome, list) else f"got {outcome}"
-            refresher.log(f"{refreshed.how}; the retry {result}")
+            refresher.log(f"{refreshed.how}; the retry {_retry_result(outcome)}")
     if isinstance(outcome, Captcha | JavaScriptWall):
         cause = "a captcha" if isinstance(outcome, Captcha) else "its JavaScript check"
         limiter.pause(cause, SEARCH_PAUSE_MINUTES * 60)

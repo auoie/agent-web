@@ -260,3 +260,15 @@ def test_search_output_and_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     code, _, err = run_cli("search", "blocked")
     assert code == 4
     assert "captcha" in err
+
+
+def test_doctor_shows_how_long_ago_a_refresh_was() -> None:
+    from agent_web.cli import _refresh_line  # pyright: ignore[reportPrivateUsage]
+
+    line = "2026-10-21 20:35:54 UTC  headless firefox, 1.3 s; the retry got a captcha"
+    now = 1792614954.0 + 38 * 60  # 2026-10-21 20:35:54 UTC, plus 38 minutes
+    assert _refresh_line(line, now) == (
+        "past refresh, 38 min ago (20:35 UTC): headless firefox, 1.3 s; the retry got a captcha"
+    )
+    assert _refresh_line(line, now + 3 * 3600).startswith("past refresh, 3 h ago")
+    assert _refresh_line("garbage", now) == "past refresh: garbage"

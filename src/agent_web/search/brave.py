@@ -91,8 +91,14 @@ def _save_quota(path: Path, response: HttpResponse, now: float) -> None:
     path.write_text(json.dumps({"at": now, **quota}), encoding="utf-8")
 
 
+def _numbers(header: str) -> list[int]:
+    """ "50, 0" -> [50, 0]; [] if it isn't a list of numbers."""
+    parts = [part.strip() for part in header.split(",")]
+    return [int(part) for part in parts] if all(part.isdigit() for part in parts) else []
+
+
 def last_quota(config: Config) -> str | None:
-    """Brave's limit headers from its last answer, for `web doctor`."""
+    """What Brave's limit headers said in its last answer, for `web doctor`."""
     try:
         data = as_dict(json.loads(quota_path(config).read_text(encoding="utf-8")))
     except (OSError, ValueError):
@@ -101,9 +107,17 @@ def last_quota(config: Config) -> str | None:
         return None
     at = data.get("at")
     when = time.strftime("%H:%M UTC", time.gmtime(at)) if isinstance(at, int | float) else "?"
-    limits = get_str(data, "x-ratelimit-limit")
-    remaining = get_str(data, "x-ratelimit-remaining")
-    return f"limits {limits or '?'} (per second, per month); remaining {remaining or '?'} at {when}"
+    limits = _numbers(get_str(data, "x-ratelimit-limit"))
+    remaining = _numbers(get_str(data, "x-ratelimit-remaining"))
+    if len(limits) != 2 or len(remaining) != 2:
+        return f"limit headers at {when}: {get_str(data, 'x-ratelimit-limit') or '?'}"
+    per_second, per_month = limits
+    if per_month == 0:  # Brave's way of saying the plan has no monthly cap
+        return (
+            f"up to {per_second} searches a second, no monthly cap: searches are paid from "
+            f"credit (usage: api-dashboard.search.brave.com), as of {when}"
+        )
+    return f"{remaining[1]} of {per_month} searches left this month, as of {when}"
 
 
 def search(
