@@ -9,7 +9,7 @@ import pytest
 from agent_web.cli import main
 from agent_web.config import Config, parse_config
 from agent_web.failures import Captcha, Failure
-from agent_web.search.google import SearchResult, SearchResults
+from agent_web.search.google import SearchResult, SearchResults, limiter_for
 from conftest import Server, requires_pandoc
 
 
@@ -130,27 +130,47 @@ def test_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
     assert code == 1
     assert "can't read firefox cookies: locked" in out
     assert "MISSING: get it" in out
+    state["jar"], state["pandoc"] = "ok", True
+    limiter_for(Config()).pause("its JavaScript check", 300)
+    code, out, _ = run_cli("doctor")
+    assert code == 1
+    assert (
+        "searches paused for 5 more minute(s): Google answered a search with its JavaScript" in out
+    )
 
 
 def test_split_search_query_explains_quoting() -> None:
-    code, _, err = run_cli("search", "sqlite", "-site:sqlite.org", "-n", "20")
+    code, _, err = run_cli("search", "sqlite", "-site:sqlite.org", "--page", "2")
     assert code == 1
     assert "unrecognized arguments: -site:sqlite.org" in err
     assert "Put all of it in single quotes" in err
+    code, _, err = run_cli("search", "sqlite", "-n", "10")
+    assert code == 1
+    assert "-n was replaced by --page N" in err
+    assert "single quotes" not in err
     _, _, fetch_err = run_cli("fetch", "https://a.example/", "extra")
     assert "single quotes" not in fetch_err
 
 
 def test_search_output_and_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_search(query: str, n: int, config: Config) -> SearchResults | Failure:
+    asked: list[int] = []
+
+    def fake_search(query: str, page: int, config: Config) -> SearchResults | Failure:
+        asked.append(page)
         if query == "blocked":
             return Captcha("Google")
         return SearchResults(query, (SearchResult("Title", "https://a.example/", "snippet"),))
 
     monkeypatch.setattr("agent_web.search.google.search", fake_search)
-    code, out, _ = run_cli("search", "pandoc", "-n", "500")
+    code, out, _ = run_cli("search", "pandoc")
     assert code == 0
     assert "1. Title\n   https://a.example/\n   snippet" in out
+    assert run_cli("search", "pandoc", "--page", "5")[0] == 0
+    assert asked == [1, 5]
+    for bad in ("0", "6"):
+        code, _, err = run_cli("search", "pandoc", "--page", bad)
+        assert code == 1
+        assert "--page must be between 1 and 5" in err
     code, out, _ = run_cli("search", "pandoc", "--json")
     assert '"url": "https://a.example/"' in out
     code, _, err = run_cli("search", "blocked")

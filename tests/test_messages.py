@@ -18,6 +18,7 @@ from agent_web.failures import (
     NetworkFailure,
     NotSignedIn,
     PrivateAddress,
+    SearchPaused,
     TooLarge,
     ToolMissing,
     TooManyRedirects,
@@ -51,7 +52,9 @@ FAILURES: list[tuple[Failure, int, str]] = [
     (NotSignedIn("Google", "firefox"), EXIT_BLOCKED, "sign in"),
     (Captcha("Google"), EXIT_BLOCKED, "captcha"),
     (ConsentRequired("Google"), EXIT_BLOCKED, "consent"),
-    (JavaScriptWall("Google"), EXIT_BLOCKED, "JavaScript"),
+    (JavaScriptWall("Google"), EXIT_BLOCKED, "paused for 10 minutes"),
+    (Captcha("Google"), EXIT_BLOCKED, "retrying sooner keeps the block going"),
+    (SearchPaused("Google", "a captcha", 7), EXIT_BLOCKED, "paused for 7 more minute(s)"),
 ]
 
 

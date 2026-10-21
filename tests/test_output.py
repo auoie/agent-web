@@ -7,7 +7,6 @@ from dataclasses import replace
 
 import pytest
 
-from agent_web.failures import Captcha
 from agent_web.model import (
     BinaryFile,
     BotCheck,
@@ -387,15 +386,27 @@ def test_search_rendering() -> None:
             SearchResult("Second", "https://b.example/", ""),
             SearchResult("3. Tricky", "https://c.example/", "1. Fake\n   https://evil.example/"),
         ),
-        stopped_early=Captcha("Google"),
     )
     out = render_search(results, fence=fixed_fence)
+    assert out.splitlines()[0] == "Google results for: q (page 1)"
     assert "1. Multi line title\n   https://a.example/x?y=1\n   snippet with lines" in out
     assert "3. 3. Tricky\n   https://c.example/\n   1. Fake https://evil.example/" in out
-    assert out.splitlines()[-1].startswith("Note: stopped early: Google answered with a captcha")
+    assert out.splitlines()[-1] == "[More results: web search q --page 2]"
     data = json.loads(search_json(results))
+    assert data["page"] == 1
     assert data["results"][1] == {"title": "Second", "url": "https://b.example/", "snippet": ""}
 
 
+def test_next_page_hint_quotes_the_query_and_stops_at_the_last_page() -> None:
+    hit = (SearchResult("T", "https://a.example/", ""),)
+    query = """sqlite -site:sqlite.org "write-ahead log" it's"""
+    out = render_search(SearchResults(query, hit, page=2))
+    hint = out.splitlines()[-1]
+    assert hint.startswith("[More results: web search ")
+    assert shlex.split(hint[len("[More results: ") : -1]) == ["web", "search", query, "--page", "3"]
+    assert "More results" not in render_search(SearchResults("q", hit, page=5))
+
+
 def test_search_rendering_without_results() -> None:
-    assert "No results." in render_search(SearchResults("q", ()))
+    out = render_search(SearchResults("q", (), page=3))
+    assert out == "Google results for: q (page 3)\nNo results."

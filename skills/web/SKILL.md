@@ -12,10 +12,12 @@ search tools, which may hand you another model's summary or a lossy conversion.
 
 ## Commands
 
-- `web search 'QUERY' [-n 10]`: Google results (title, URL, snippet), 10 by default, at most 50.
+- `web search 'QUERY' [--page N]`: one page of Google results (title, URL, snippet), usually
+  8-10, from exactly one request to Google. For more, run it again with `--page 2` (up to 5), as
+  the hint at the end of the output says.
   **The query is one argument:** put all of it in single quotes, and any phrase inside it in
-  double quotes: `web search 'sqlite -site:sqlite.org "write-ahead log"' -n 20`. Google operators
-  work (`site:`, `-site:`, `OR`, quotes, `filetype:pdf`).
+  double quotes: `web search 'sqlite -site:sqlite.org "write-ahead log"' --page 2`. Google
+  operators work (`site:`, `-site:`, `OR`, quotes, `filetype:pdf`).
 - `web fetch URL`: the page's own text. HTML becomes markdown and PDFs get `--- Page N ---`
   markers. Sites the user listed in `fetch.cookie_domains` (in `~/.config/agent-web/config.toml`)
   get their browser session, so you see the page as they would when logged in; every other site
@@ -97,7 +99,7 @@ normally still work; if one is gone, fetch the page again.
 # Search: the whole query in single quotes, phrases in double quotes inside
 web search 'pandoc lua filter tables'
 web search 'site:docs.python.org argparse subparsers'
-web search 'sqlite -site:sqlite.org "write-ahead log"' -n 20
+web search 'sqlite -site:sqlite.org "write-ahead log"' --page 2
 web search 'attention is all you need filetype:pdf'
 
 # Read a page. Quote URLs that contain ? or & (the shell treats & as "run in background")
@@ -142,8 +144,14 @@ page doesn't say it.
   own, but your harness's output limit applies to the whole call: `web fetch A; web fetch B` can
   print 50,000 characters, and the end gets cut. Fetch pages in separate calls, or give each a
   smaller `--max-chars` (e.g. 5,000 each for five pages) and continue in the useful ones.
-- **Firing off many searches at once.** Searches are spaced 2 seconds apart to protect the user's
-  Google account, so they queue up. Run a few, read the results, then refine.
+- **Firing off many searches at once.** Every agent on the machine searches with the user's one
+  Google account, and requests are spaced 2 seconds apart, so they queue up. A long burst (dozens
+  of searches in a few minutes, e.g. from several agents in parallel) can still make Google block
+  searches for a while. Run a few, read the results, then refine.
+- **Retrying a blocked search.** After Google answers with a captcha or its JavaScript check,
+  `web search` pauses for 10 minutes for every agent and says so (exit code 4). Don't retry or
+  loop with `sleep`: retrying keeps the block going. Work with the pages you already found
+  (`web fetch` still works), or wait.
 - **Retrying a blocked page.** If a Note says the page is a bot check or an error page, retrying
   rarely helps. Say the page couldn't be read, or tell the user about the cookie setting the Note
   mentions.
@@ -173,4 +181,5 @@ page doesn't say it.
 ## Exit codes
 
 0 ok · 1 usage, config or setup error · 2 network error (including too large or too many
-redirects) · 3 HTTP error status · 4 blocked (captcha, bot check, not signed in to Google)
+redirects) · 3 HTTP error status · 4 blocked (captcha, bot check, searches paused, not signed in
+to Google)

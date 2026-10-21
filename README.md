@@ -22,7 +22,9 @@ and conversion problems are reported in `Note:` lines; long output can be read i
 ## What it does
 
 - **`web search 'query'`** prints Google results (title, URL, snippet) using your browser's signed-in
-  Google session. All Google operators work.
+  Google session. All Google operators work. Each search fetches one results page (usually 8-10
+  results) with one request; `--page 2` to `--page 5` get the next ones, and the output ends with
+  the command for the next page.
 - **`web fetch URL`** prints the page's own text:
   - **HTML** becomes markdown via pandoc plus a cleanup filter. Layout wrappers and attributes are
     removed. Simple tables become markdown tables. Tables with merged cells stay HTML tables, so
@@ -137,7 +139,9 @@ What agent-web does do:
   terminal when you run `web` yourself.
 - **pandoc runs with `--sandbox`**, so converting a hostile page can't read files.
 - **Limits:** a 25 MB download cap, a 30 s timeout, at most 10 redirects, and at least 2 s between
-  Google requests (shared across processes).
+  Google requests (shared across processes). After Google answers with a captcha or its
+  JavaScript check, searches pause for 10 minutes for every process: retrying during a block
+  keeps it going.
 
 Any other network command (`curl`, `wget`, a script) is the same channel, so the same warning applies
 to auto-approving shell commands in general.
@@ -304,7 +308,7 @@ Exit codes:
 - 1: usage, config or missing tool
 - 2: network error
 - 3: HTTP error status
-- 4: blocked (captcha, bot check, not signed in)
+- 4: blocked (captcha, bot check, searches paused, not signed in)
 
 ## Limitations
 

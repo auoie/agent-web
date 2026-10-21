@@ -79,6 +79,20 @@ class JavaScriptWall:
     service: str
 
 
+@dataclass(frozen=True)
+class SearchPaused:
+    """Searches are paused after the service blocked one (see search/google.py)."""
+
+    service: str
+    cause: str  # what it answered with: "a captcha", "its JavaScript check"
+    minutes_left: int
+
+
+# After a captcha or JavaScript check, every process stops searching for this long: retrying
+# during a block keeps it going.
+SEARCH_PAUSE_MINUTES = 10
+
+
 Failure: TypeAlias = (
     InvalidConfig
     | ToolMissing
@@ -92,6 +106,7 @@ Failure: TypeAlias = (
     | Captcha
     | ConsentRequired
     | JavaScriptWall
+    | SearchPaused
 )
 
 EXIT_OK = 0
@@ -109,7 +124,7 @@ def exit_code(failure: Failure) -> int:
             return EXIT_USAGE
         case NetworkFailure() | TooLarge() | TooManyRedirects():
             return EXIT_NETWORK
-        case NotSignedIn() | Captcha() | ConsentRequired() | JavaScriptWall():
+        case NotSignedIn() | Captcha() | ConsentRequired() | JavaScriptWall() | SearchPaused():
             return EXIT_BLOCKED
         case _:
             assert_never(failure)
@@ -145,15 +160,26 @@ def describe(failure: Failure) -> str:
             )
         case Captcha(service):
             return (
-                f"{service} answered with a captcha: open it in your browser, solve the captcha, "
-                "then try again in a few minutes"
+                f"{service} answered with a captcha: it is limiting searches, usually after many "
+                f"in a short time. Searches are paused for {SEARCH_PAUSE_MINUTES} minutes; "
+                "retrying sooner keeps the block going. If it continues after that, open "
+                f"{service} in your browser and solve the captcha"
             )
         case ConsentRequired(service):
             return f"{service} shows a consent page: open it in your browser, accept, then retry"
         case JavaScriptWall(service):
             return (
-                f"{service} served its JavaScript check instead of results; your cookies may have "
-                "expired. Open it in your browser, search once, then retry"
+                f"{service} served its JavaScript check instead of results: it is limiting "
+                "searches, usually after many in a short time. Searches are paused for "
+                f"{SEARCH_PAUSE_MINUTES} minutes; retrying sooner keeps the block going. If it "
+                f"continues after that, the sign-in may have expired: open {service} in your "
+                "browser, search once, then retry"
+            )
+        case SearchPaused(service, cause, minutes_left):
+            return (
+                f"{service} searches are paused for {minutes_left} more minute(s) because it "
+                f"answered a search with {cause}; retrying sooner keeps the block going. Work with "
+                "the pages already found (web fetch still works), or wait"
             )
         case _:
             assert_never(failure)

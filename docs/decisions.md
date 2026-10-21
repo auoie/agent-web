@@ -61,6 +61,19 @@ search APIs weren't needed for that; they remain an option for later (see TODO.m
   class names. `just test-live` catches layout drift.
 - At least 2 s between Google requests, shared across processes (a file lock), to protect the
   account. Searches appear in the account's search history.
+- **After a captcha or JavaScript check, searches pause for 10 minutes**, shared through the same
+  locked state file, and `web search` says so without contacting Google. On 2026-10-21 a research
+  session ran about 18 searches in two minutes (the 2 s spacing allows ~30 requests a minute),
+  then started five agents searching in parallel. Google answered with its JavaScript check and
+  twice with its `/sorry/` captcha, and the agents kept retrying for 17 minutes (some with
+  `sleep 45`), almost all blocked. The old message blamed expired cookies, which sent agents
+  into retry loops; the cookies were fine. A search 2.5 hours later worked.
+- **Each search is one request for one results page** (`--page N`, 1-5, default 1), and all of
+  its 8-10 results are returned. The output ends with the command for the next page, like
+  `web fetch`'s `--offset` hint. A result count (`-n`, removed without an alias) either made a
+  second request for the last one or two results or fetched a page and threw most of it away;
+  the default `-n 10` usually cost two requests. A page count (`--pages N`, briefly) fetched
+  pages 1 to N, so asking for more after a first search fetched page 1 again.
 
 ## Fetching
 

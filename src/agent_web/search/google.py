@@ -7,11 +7,13 @@ containing an <h3> is a result) rather than by Google's obfuscated class names.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
+import json
 import math
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from http.cookiejar import Cookie
 from pathlib import Path
@@ -28,22 +30,24 @@ from agent_web.cookies import (
     load_browser_cookies,
 )
 from agent_web.failures import (
+    SEARCH_PAUSE_MINUTES,
     Captcha,
     ConsentRequired,
     CookieReadFailure,
     Failure,
     JavaScriptWall,
     NotSignedIn,
+    SearchPaused,
 )
 from agent_web.http import DownloadFailure, HttpResponse, download
 from agent_web.invisible import reveal
+from agent_web.jsonvalue import as_dict, get_float, get_str
 from agent_web.urls import domain_matches, normalize
 
 SEARCH_URL = "https://www.google.com/search"
 SERVICE = "Google"
 AUTH_COOKIES = frozenset({"SID", "__Secure-1PSID", "__Secure-3PSID"})
 RESULTS_PER_PAGE = 10
-MAX_PAGES = 5
 MAX_SNIPPET = 400
 _GOOGLE_HOST = re.compile(r"(?:^|\.)google\.[a-z]{2,3}(?:\.[a-z]{2})?$")
 _INTERNAL_PATHS = (
@@ -76,7 +80,7 @@ class SearchResult:
 class SearchResults:
     query: str
     results: tuple[SearchResult, ...]
-    stopped_early: Failure | None = None
+    page: int = 1
 
 
 def _text(
@@ -223,8 +227,39 @@ def signed_in(cookies: Iterable[Cookie]) -> bool:
     )
 
 
+@dataclass
+class _LimiterState:
+    last: float = 0.0  # when the last request started
+    paused_until: float = 0.0
+    cause: str = ""
+
+
+def _parse_state(text: str) -> _LimiterState:
+    try:
+        data = as_dict(json.loads(text))
+    except ValueError:
+        data = None
+    if data is None:
+        try:
+            return _LimiterState(last=float(text.strip()))  # the older format: just `last`
+        except ValueError:
+            return _LimiterState()
+    return _LimiterState(
+        last=get_float(data, "last") or 0.0,
+        paused_until=get_float(data, "paused_until") or 0.0,
+        cause=get_str(data, "cause"),
+    )
+
+
+@dataclass(frozen=True)
+class Paused:
+    seconds_left: float
+    cause: str
+
+
 class RateLimiter:
-    """Keeps at least `min_interval` seconds between requests, across processes (flock)."""
+    """Keeps at least `min_interval` seconds between Google requests, and pauses searches after
+    Google blocks one, across processes: every agent on the machine uses one Google account."""
 
     def __init__(
         self,
@@ -238,23 +273,45 @@ class RateLimiter:
         self._now = now
         self._sleep = sleep
 
-    def wait(self) -> None:
-        if self.min_interval <= 0:
-            return
+    @contextlib.contextmanager
+    def _state(self) -> Generator[_LimiterState]:
+        """The shared state, read and written back under an exclusive lock (flock)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a+", encoding="utf-8") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
             handle.seek(0)
-            try:
-                last = float(handle.read().strip() or 0)
-            except ValueError:
-                last = 0.0
-            delay = last + self.min_interval - self._now()
-            if delay > 0:
-                self._sleep(min(delay, self.min_interval))
+            state = _parse_state(handle.read())
+            yield state
             handle.seek(0)
             handle.truncate()
-            handle.write(f"{self._now():.3f}")
+            handle.write(json.dumps(state.__dict__))
+
+    def wait(self) -> Paused | None:
+        """Wait until `min_interval` has passed since the last request and claim the next slot.
+        While searches are paused, return the pause instead, without waiting."""
+        with self._state() as state:
+            now = self._now()
+            if state.paused_until > now:
+                return Paused(state.paused_until - now, state.cause)
+            delay = state.last + self.min_interval - now
+            if delay > 0:
+                self._sleep(min(delay, self.min_interval))
+            state.last = self._now()
+        return None
+
+    def pause(self, cause: str, seconds: float) -> None:
+        with self._state() as state:
+            state.paused_until = self._now() + seconds
+            state.cause = cause
+
+    def paused(self) -> Paused | None:
+        with self._state() as state:
+            left = state.paused_until - self._now()
+            return Paused(left, state.cause) if left > 0 else None
+
+
+def limiter_for(config: Config) -> RateLimiter:
+    return RateLimiter(config.cache_dir / "google-last-request", config.search_min_interval)
 
 
 def search_url(query: str, page: int) -> str:
@@ -266,46 +323,36 @@ def search_url(query: str, page: int) -> str:
 
 def search(
     query: str,
-    n: int,
+    page: int,
     config: Config,
     *,
     cookie_loader: CookieLoader = load_browser_cookies,
     downloader: Downloader = download,
     limiter: RateLimiter | None = None,
 ) -> SearchResults | Failure:
+    """The results on one Google results page (1 is the first): exactly one request."""
     cookies = cookie_loader(config.browser, "google.com", config.cookie_file)
     if isinstance(cookies, CookieReadFailure):
         return cookies
     if not signed_in(cookies):
         return NotSignedIn(SERVICE, config.browser)
-    source = GoogleCookies(cookies)
-    limiter = limiter or RateLimiter(
-        config.cache_dir / "google-last-request", config.search_min_interval
+    limiter = limiter or limiter_for(config)
+    if (paused := limiter.wait()) is not None:
+        return SearchPaused(SERVICE, paused.cause, math.ceil(paused.seconds_left / 60))
+    response = downloader(
+        search_url(query, page - 1),
+        timeout=config.timeout,
+        max_bytes=config.max_download_bytes,
+        cookie_source=GoogleCookies(cookies),
+        impersonate_with_cookies=impersonation_for(config.browser),
     )
-    results: list[SearchResult] = []
-    seen: set[str] = set()
-    pages = min(MAX_PAGES, math.ceil(n / RESULTS_PER_PAGE) + 1)
-    for page in range(pages):
-        limiter.wait()
-        response = downloader(
-            search_url(query, page),
-            timeout=config.timeout,
-            max_bytes=config.max_download_bytes,
-            cookie_source=source,
-            impersonate_with_cookies=impersonation_for(config.browser),
-        )
-        if not isinstance(response, HttpResponse):
-            return SearchResults(query, tuple(results), response) if results else response
-        html_text = decode_html(response.content, response.content_type)
-        found = parse_results(html_text)
-        if (problem := classify_response(response, html_text, found)) is not None:
-            return SearchResults(query, tuple(results), problem) if results else problem
-        new = [r for r in found if normalize(r.url) not in seen]
-        if not new:
-            break
-        for result in new:
-            seen.add(normalize(result.url))
-        results.extend(new)
-        if len(results) >= n:
-            break
-    return SearchResults(query, tuple(results[:n]))
+    if not isinstance(response, HttpResponse):
+        return response
+    html_text = decode_html(response.content, response.content_type)
+    found = parse_results(html_text)
+    if (problem := classify_response(response, html_text, found)) is not None:
+        if isinstance(problem, Captcha | JavaScriptWall):
+            cause = "a captcha" if isinstance(problem, Captcha) else "its JavaScript check"
+            limiter.pause(cause, SEARCH_PAUSE_MINUTES * 60)
+        return problem
+    return SearchResults(query, tuple(found), page)

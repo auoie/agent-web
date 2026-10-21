@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import assert_never
 from urllib.parse import urlsplit
 
-from agent_web.failures import EXIT_BLOCKED, EXIT_HTTP_ERROR, EXIT_OK, describe
+from agent_web.failures import EXIT_BLOCKED, EXIT_HTTP_ERROR, EXIT_OK
 from agent_web.model import (
     BinaryFile,
     BotCheck,
@@ -34,6 +34,7 @@ from agent_web.model import (
     RedditThread,
     ScannedPdf,
 )
+from agent_web.search import MAX_PAGE
 from agent_web.search.google import SearchResults
 
 FENCE_PREFIX = "untrusted-web-content"
@@ -442,16 +443,17 @@ def saved_text(content: Content, fence: Callable[[], str] = new_fence) -> str:
 
 
 def render_search(results: SearchResults, fence: Callable[[], str] = new_fence) -> str:
+    lines = [f"Google results for: {results.query} (page {results.page})"]
+    if not results.results:
+        lines.append("No results.")
+        return "\n".join(lines)
     tag = fence()
-    lines = [
-        f"Google results for: {results.query}",
+    lines += [
         "Snippets come from Google and can be stale or wrong. Fetch a page with "
         "`web fetch URL` before relying on it.",
         UNTRUSTED_NOTE.format(fence=tag),
         f"<{tag}>",
     ]
-    if not results.results:
-        lines.append("No results.")
     for number, result in enumerate(results.results, 1):
         lines.append(f"{number}. {' '.join(result.title.split())}")
         lines.append(f"   {result.url}")
@@ -459,15 +461,16 @@ def render_search(results: SearchResults, fence: Callable[[], str] = new_fence) 
             lines.append(f"   {' '.join(result.snippet.split())}")
         lines.append("")
     lines.append(f"</{tag}>")
-    if results.stopped_early is not None:
-        lines.append(f"Note: stopped early: {describe(results.stopped_early)}")
+    if results.page < MAX_PAGE:
+        query = shlex.quote(results.query)
+        lines.append(f"[More results: web search {query} --page {results.page + 1}]")
     return "\n".join(lines)
 
 
 def search_json(results: SearchResults) -> str:
     payload: dict[str, object] = {
         "query": results.query,
+        "page": results.page,
         "results": [r.__dict__ for r in results.results],
-        "stopped_early": describe(results.stopped_early) if results.stopped_early else None,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

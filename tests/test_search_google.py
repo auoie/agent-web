@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from http.cookiejar import Cookie
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -8,10 +9,18 @@ import pytest
 
 from agent_web.config import Config
 from agent_web.cookies import CookieSource
-from agent_web.failures import Captcha, ConsentRequired, JavaScriptWall, NetworkFailure, NotSignedIn
+from agent_web.failures import (
+    Captcha,
+    ConsentRequired,
+    JavaScriptWall,
+    NetworkFailure,
+    NotSignedIn,
+    SearchPaused,
+)
 from agent_web.http import DownloadFailure, HttpResponse
 from agent_web.search.google import (
     GoogleCookies,
+    Paused,
     RateLimiter,
     SearchResults,
     classify_response,
@@ -135,12 +144,18 @@ def test_google_cookies_only_go_to_google() -> None:
 
 
 class FakeLimiter(RateLimiter):
-    def __init__(self) -> None:
+    def __init__(self, paused: Paused | None = None) -> None:
         super().__init__(Path("/nonexistent"), 0)
         self.calls = 0
+        self.pauses: list[tuple[str, float]] = []
+        self._paused = paused
 
-    def wait(self) -> None:
+    def wait(self) -> Paused | None:
         self.calls += 1
+        return self._paused
+
+    def pause(self, cause: str, seconds: float) -> None:
+        self.pauses.append((cause, seconds))
 
 
 def signed_in_loader(browser: str, domain: str, cookie_file: Path | None) -> list[Cookie]:
@@ -171,74 +186,82 @@ def numbered(start: int, count: int) -> str:
     )
 
 
-def test_search_paginates_until_n(config: Config) -> None:
+def test_search_fetches_one_page_with_one_request(config: Config) -> None:
     seen: list[str] = []
     pages: dict[int, HttpResponse | DownloadFailure] = {
-        0: response(numbered(0, 10)),
-        1: response(numbered(10, 10)),
-        2: response(numbered(20, 10)),
+        0: response(numbered(0, 9)),
+        1: response(numbered(9, 8)),
     }
     limiter = FakeLimiter()
-    outcome = search(
+    first = search(
         "q",
-        15,
+        1,
         config,
         cookie_loader=signed_in_loader,
         downloader=make_downloader(pages, seen),
         limiter=limiter,
     )
-    assert isinstance(outcome, SearchResults)
-    assert [r.title for r in outcome.results] == [f"Result {i}" for i in range(15)]
-    assert len(seen) == 2
-    assert limiter.calls == 2
-    assert "start=10" in seen[1]
-
-
-def test_search_stops_when_a_page_adds_nothing(config: Config) -> None:
-    seen: list[str] = []
-    pages: dict[int, HttpResponse | DownloadFailure] = {
-        0: response(numbered(0, 4)),
-        1: response(numbered(0, 4)),
-    }
-    outcome = search(
+    assert isinstance(first, SearchResults)
+    assert [r.title for r in first.results] == [f"Result {i}" for i in range(9)]
+    assert first.page == 1
+    assert "start=" not in seen[0]
+    second = search(
         "q",
-        20,
+        2,
         config,
         cookie_loader=signed_in_loader,
         downloader=make_downloader(pages, seen),
-        limiter=FakeLimiter(),
+        limiter=limiter,
     )
-    assert isinstance(outcome, SearchResults)
-    assert len(outcome.results) == 4
-    assert len(seen) == 2
+    assert isinstance(second, SearchResults)
+    assert [r.title for r in second.results] == [f"Result {i}" for i in range(9, 17)]
+    assert second.page == 2
+    assert "start=10" in seen[1]
+    assert len(seen) == limiter.calls == 2
 
 
-def test_search_returns_partial_results_when_blocked_midway(config: Config) -> None:
-    sorry = "https://www.google.com/sorry/index"
-    pages: dict[int, HttpResponse | DownloadFailure] = {
-        0: response(numbered(0, 10)),
-        1: response("", url=sorry, redirects=(sorry,)),
-    }
+@pytest.mark.parametrize(
+    ("page", "cause"),
+    [
+        (response("", url="https://www.google.com/sorry/index"), "a captcha"),
+        (response('<a href="/httpservice/retry/enablejs">x</a>'), "its JavaScript check"),
+    ],
+)
+def test_a_block_pauses_searches(config: Config, page: HttpResponse, cause: str) -> None:
+    limiter = FakeLimiter()
     outcome = search(
         "q",
-        20,
+        1,
         config,
         cookie_loader=signed_in_loader,
-        downloader=make_downloader(pages, []),
-        limiter=FakeLimiter(),
+        downloader=make_downloader({0: page}, []),
+        limiter=limiter,
     )
-    assert isinstance(outcome, SearchResults)
-    assert len(outcome.results) == 10
-    assert outcome.stopped_early == Captcha("Google")
+    assert isinstance(outcome, Captcha | JavaScriptWall)
+    assert limiter.pauses == [(cause, 600)]
 
 
-def test_search_failure_on_first_page(config: Config) -> None:
+def test_no_request_while_searches_are_paused(config: Config) -> None:
+    seen: list[str] = []
+    outcome = search(
+        "q",
+        1,
+        config,
+        cookie_loader=signed_in_loader,
+        downloader=make_downloader({}, seen),
+        limiter=FakeLimiter(paused=Paused(seconds_left=61, cause="a captcha")),
+    )
+    assert outcome == SearchPaused("Google", "a captcha", 2)
+    assert seen == []
+
+
+def test_network_failure_is_returned(config: Config) -> None:
     pages: dict[int, HttpResponse | DownloadFailure] = {
         0: NetworkFailure("https://www.google.com", "timeout")
     }
     outcome = search(
         "q",
-        5,
+        1,
         config,
         cookie_loader=signed_in_loader,
         downloader=make_downloader(pages, []),
@@ -251,7 +274,7 @@ def test_search_requires_google_login(config: Config) -> None:
     def anonymous(browser: str, domain: str, cookie_file: Path | None) -> list[Cookie]:
         return [cookie("NID", "n", ".google.com"), cookie("SID", "x", ".notgoogle.com")]
 
-    outcome = search("q", 5, config, cookie_loader=anonymous, limiter=FakeLimiter())
+    outcome = search("q", 1, config, cookie_loader=anonymous, limiter=FakeLimiter())
     assert outcome == NotSignedIn("Google", "firefox")
 
 
@@ -281,4 +304,30 @@ def test_rate_limiter_survives_a_corrupt_state_file(tmp_path: Path) -> None:
     state = tmp_path / "last"
     state.write_text("not a number")
     RateLimiter(state, 2.0, sleep=lambda s: None).wait()
-    assert float(state.read_text()) > 0
+    assert json.loads(state.read_text())["last"] > 0
+
+
+def test_rate_limiter_reads_the_older_state_format(tmp_path: Path) -> None:
+    state = tmp_path / "last"
+    state.write_text("999.5")
+    sleeps: list[float] = []
+    RateLimiter(state, 2.0, now=lambda: 1000.0, sleep=sleeps.append).wait()
+    assert sleeps == [pytest.approx(1.5)]
+
+
+def test_pause_is_shared_and_ends(tmp_path: Path) -> None:
+    clock = [1000.0]
+    state = tmp_path / "last"
+
+    def limiter() -> RateLimiter:  # a fresh object, like another process
+        return RateLimiter(state, 2.0, now=lambda: clock[0], sleep=lambda s: None)
+
+    limiter().pause("a captcha", 600)
+    assert limiter().wait() == Paused(600, "a captcha")
+    assert limiter().paused() == Paused(600, "a captcha")
+    clock[0] += 599
+    assert limiter().wait() == Paused(1, "a captcha")
+    clock[0] += 2
+    assert limiter().wait() is None
+    assert limiter().paused() is None
+    assert json.loads(state.read_text())["last"] == clock[0]

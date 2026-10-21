@@ -27,9 +27,9 @@ def live_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 
 
 def test_google_search(live_config: Config) -> None:
-    outcome = search("pandoc lua filter", 5, live_config)
+    outcome = search("pandoc lua filter", 1, live_config)
     assert isinstance(outcome, SearchResults), outcome
-    assert len(outcome.results) == 5
+    assert len(outcome.results) >= 5
     assert all(r.url.startswith("http") and r.title for r in outcome.results)
     assert sum(bool(r.snippet) for r in outcome.results) >= 3
 

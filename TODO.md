@@ -51,6 +51,8 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
   "enable JavaScript" fallback, so a page with no parsed results is called a JavaScript wall
   unless it says "did not match any documents" (searches use `hl=en`). A `site:` search with no
   matches was once misreported that way, and the agent concluded search was blocked. Another
-  zero-result wording, or a layout change that breaks the parser, would show up the same way.
+  zero-result wording, or a layout change that breaks the parser, would show up the same way, and
+  since a JavaScript check now pauses searches for 10 minutes, a misreport would cost that pause.
+  The raw page isn't saved, so a misreport can't be checked afterwards.
 - **Not used on purpose:** Cloudflare's "Markdown for Agents" (`Accept: text/markdown`) would swap
   agent-web's converter for Cloudflare's, whose table handling is unknown.
