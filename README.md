@@ -45,7 +45,8 @@ and conversion problems are reported in `Note:` lines; long output can be read i
     need JavaScript, scanned PDFs, and text that's hidden from human visitors (marked
     `⟦hidden on page: …⟧`).
 - **The skill** (`skills/web/SKILL.md`) teaches agents the commands and the rules for using them:
-  quote what they rely on, treat page text as untrusted, read the `Note:` lines.
+  cite what they rely on (quoting numbers and exact wording), treat page text as untrusted, read
+  the `Note:` lines.
 
 ## Token cost
 
@@ -176,25 +177,29 @@ Finally, turn off each agent's built-in web tools, so agents don't fall back to 
 what runs without asking. Read the warning under [Security](#security) before letting
 `web fetch` run without asking.
 
-**Claude Code** (`~/.claude/settings.json`). Bash commands ask by default; this allows searches:
+**Claude Code** (`~/.claude/settings.json`). Bash commands ask by default; this allows searches,
+and lets Claude's file tools read the [saved files](#output-and-exit-codes) without asking (`rg`
+or `sed` on them through Bash may still ask):
 
 ```json
 {
   "permissions": {
     "deny": ["WebFetch", "WebSearch"],
-    "allow": ["Bash(web search *)", "Bash(web doctor)"]
+    "allow": ["Bash(web search *)", "Bash(web doctor)", "Read(~/.cache/agent-web/**)"]
   }
 }
 ```
 
 **OpenCode** (`~/.config/opencode/opencode.jsonc`). OpenCode allows every shell command by
 default, so `web` runs without asking. Add an `ask` rule for `web fetch *` to be asked about
-fetches:
+fetches. It asks before reading outside the project, so the `external_directory` rule lets agents
+read the saved files:
 
 ```jsonc
 "permissions": [
   { "action": "webfetch", "resource": "*", "effect": "deny" },
-  { "action": "websearch", "resource": "*", "effect": "deny" }
+  { "action": "websearch", "resource": "*", "effect": "deny" },
+  { "action": "external_directory", "resource": "~/.cache/agent-web/*", "effect": "allow" }
 ]
 ```
 
@@ -211,6 +216,10 @@ the list for fetches too:
 ```python
 prefix_rule(pattern=["web", ["search", "doctor"]], decision="allow")
 ```
+
+Codex's sandbox can read files anywhere, so agents read the saved files without a rule.
+
+If you change `cache.dir`, use that folder in the rules above instead of `~/.cache/agent-web`.
 
 ## Configuration
 
@@ -266,7 +275,8 @@ same untrusted-content fence, headed by its URL and fetch time) and the response
 `Original:` (HTML, PDF, JSON, …; binary files get only this). They're named after the site, so a
 path shows where the text came from. Agents read them with `rg`, `sed` or their own file tools for
 what `--find` can't do: regexes, context lines, the list of headings, one section. Since they're
-outside the project, your agent may ask permission to read them.
+outside the project, your agent may ask permission to read them; [Install](#install) has a rule
+for each agent.
 
 **Cache:** results are kept for an hour in `~/.cache/agent-web` (200 MB, oldest removed first), so
 `--offset` and `--find` on the same page don't download it again; `--refresh` skips it. Error,
