@@ -38,11 +38,10 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
   user accepted this; the README's Security section carries the warning.
 - Also rejected: refusing cross-site redirects (too much friction for a small gain) and protecting
   the config file from agent edits (too paranoid).
-- **The skill asks for citations, and quotes where wording matters.** It first required an exact
-  quote for every fact taken from a page. An agent following it literally filled its answer with
-  quoted fragments of routine facts, which a URL covers just as well. Quotes are now required
-  where a paraphrase can be silently wrong (numbers, versions, names, MUST/SHOULD, surprising or
-  disputed claims), which is where built-in tools invented numbers and misread table rows.
+- **The skill doesn't tell agents how to present answers.** Its job is getting the agent real
+  page text and using it safely. It used to require quoting every fact taken from a page, then
+  quoting numbers and exact wording; agents (GPT-6.1 Sol, GLM 5.3) filled their answers with
+  quotes. Citing and quoting are up to the user and their agent.
 
 ## Search: Google with the user's browser cookies
 

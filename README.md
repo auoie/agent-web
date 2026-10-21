@@ -45,8 +45,8 @@ and conversion problems are reported in `Note:` lines; long output can be read i
     need JavaScript, scanned PDFs, and text that's hidden from human visitors (marked
     `⟦hidden on page: …⟧`).
 - **The skill** (`skills/web/SKILL.md`) teaches agents the commands and the rules for using them:
-  cite what they rely on (quoting numbers and exact wording), treat page text as untrusted, read
-  the `Note:` lines.
+  treat page text as untrusted and read the `Note:` lines. How agents present answers is left to
+  you and your agent.
 
 ## Token cost
 
