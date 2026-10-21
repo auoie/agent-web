@@ -237,6 +237,8 @@ def find_passages(text: str, needle: str, limit_chars: int) -> tuple[list[Passag
         if not pattern.search(block):
             continue
         total += 1
+        if limit_chars <= 0:  # --max-chars 0: count the matches, show none
+            continue
         room = limit_chars - used
         offset, end, shown = match.start(), match.end(), block
         if "\n" in block and (len(block) > LONG_BLOCK or len(block) > room):
@@ -384,8 +386,9 @@ def render_fetch(
     start = max(0, min(offset, len(text)))
     end = min(len(text), start + max_chars)
     lines += _opening(content, tag)
-    lines += [f"Length: {len(text):,} chars; showing {start:,}-{end:,}", f"<{tag}>"]
-    lines += [text[start:end], f"</{tag}>"]
+    lines.append(f"Length: {len(text):,} chars; showing {start:,}-{end:,}")
+    if end > start:
+        lines += [f"<{tag}>", text[start:end], f"</{tag}>"]
     if end < len(text):
         remaining = len(text) - end
         lines.append(

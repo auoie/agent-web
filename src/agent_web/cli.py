@@ -79,7 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-chars",
         type=int,
         default=None,
-        help="maximum page-text characters (metadata and omission markers are extra)",
+        help="maximum page-text characters (metadata and omission markers are extra); 0 prints "
+        "only the header, with the saved files' paths",
     )
     fetch.add_argument("--find", metavar="TEXT", help="print only passages containing TEXT")
     fetch.add_argument("--refresh", action="store_true", help="ignore the cache")
@@ -123,8 +124,8 @@ def _fetch(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) -
     from agent_web.output import exit_code_for, fetch_json, render_fetch
 
     max_chars = config.max_chars if args.max_chars is None else int(args.max_chars)
-    if max_chars < 1 or int(args.offset) < 0:
-        print("web: --max-chars must be positive and --offset non-negative", file=err)
+    if max_chars < 0 or int(args.offset) < 0:
+        print("web: --max-chars and --offset can't be negative", file=err)
         return EXIT_USAGE
     outcome = fetch(
         str(args.url), config, refresh=bool(args.refresh), whole_page=bool(args.whole_page)

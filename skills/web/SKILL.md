@@ -36,7 +36,9 @@ search tools, which may hand you another model's summary or a lossy conversion.
     from 0: they aren't byte positions or positions in the saved file (use `rg -n` line numbers
     there), and they change with `--whole-page`.
   - `--max-chars N`: maximum characters of page text to show (default 25,000), shared across
-    `--find` passages. Headers, notes and `⟦… left out⟧` marks are extra.
+    `--find` passages. Headers, notes and `⟦… left out⟧` marks are extra. `--max-chars 0` shows
+    no page text: just the header (the saved files' paths, the notes, the length or number of
+    matches) and the title.
   - `--refresh`: download again instead of using the copy cached in the last hour.
   - `--whole-page`: show the entire page. By default, when a page marks its main content (an
     HTML `<main>` element), only that part is shown, without the site's menus, header and footer.
@@ -89,6 +91,9 @@ Every fetch writes two files, whatever part of the page was printed. The paths a
 - **`Original:`** the response exactly as downloaded (HTML, PDF, JSON, an image, …). Check it
   when the converted text looks wrong, such as a garbled table, or read a PDF with a PDF tool.
   Binary files have only this one.
+
+To save a page and get its paths without reading it yet, use `web fetch URL --max-chars 0` and
+take the path from its `Full text:` line.
 
 The files are kept until the cache needs the space, so paths from earlier in the session
 normally still work; if one is gone, fetch the page again.

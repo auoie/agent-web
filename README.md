@@ -272,7 +272,8 @@ notes) is outside, apart from its `⟦…⟧` labels (hidden text, images, text 
 `--json` prints the same data as JSON.
 
 `--max-chars` caps the page text returned, including across `--find` passages. Headers, notes,
-`⟦… left out⟧` marks and the headings shown above passages are extra.
+`⟦… left out⟧` marks and the headings shown above passages are extra. `--max-chars 0` prints only
+the header (with the saved files' paths) and the title, for an agent that will read the saved file.
 
 **`--find TEXT`** splits the page into blocks at blank lines (a paragraph, list, table or code
 block) and prints every block containing TEXT (plain text, case-insensitive) in its own untrusted

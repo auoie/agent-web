@@ -93,6 +93,23 @@ def test_window_and_continuation_command() -> None:
     assert shlex.split(continuation.split("with: ", 1)[1].rstrip("]"))[2] == URL
 
 
+def test_max_chars_zero_prints_only_the_header() -> None:
+    files = SavedFiles(original="/c/files/a.html", text="/c/text/a.md")
+    result = replace(html_result("alpha\n\nbeta alpha", HiddenText(1)), files=files)
+    out = render_fetch(result, offset=0, max_chars=0, fence=fixed_fence)
+    outside, blocks = split_blocks(out)
+    assert blocks == ["T"]  # the title, to tell which page it is; no page text
+    assert "Full text: /c/text/a.md" in outside
+    assert any(line.startswith("Note: ") for line in outside)
+    assert "Length: 17 chars; showing 0-0" in outside
+    assert outside[-1].startswith("[17 more chars. Continue with: web fetch ")
+    found = render_fetch(result, offset=0, max_chars=0, find="alpha", fence=fixed_fence)
+    outside, blocks = split_blocks(found)
+    assert "Matches for 'alpha': 2 passage(s), showing 0" in outside
+    assert blocks == ["T"]
+    assert not any(line.startswith("Passage") for line in outside)
+
+
 def test_no_continuation_when_complete() -> None:
     out = render_fetch(html_result("short"), offset=0, max_chars=100, fence=fixed_fence)
     assert "Continue with" not in out

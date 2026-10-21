@@ -179,6 +179,10 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
   without `web` growing a flag for each. The original lets them check the conversion, e.g. a garbled
   table. The page is still printed by default: most fetches are meant to be read, and printing
   only the paths would make each one two calls.
+- **`--max-chars 0` prints only the header and title.** Agents wanting just the saved file ran
+  `web fetch URL --max-chars 500 >/dev/null; F=$(ls -t …/text/site-* | head -1)` (15 times in one
+  research session), which drops the notes and can pick the wrong page: a cache hit doesn't
+  rewrite the file, and parallel agents write to the same folder.
 - Declined: a flag that pipes the text through a command the agent supplies (`--filter 'rg …'`),
   which would keep its output inside the fence. People allow `web fetch` as a read-only command,
   and the flag would let it run any command without approval (even `rg --pre`, `sed`'s `e` and

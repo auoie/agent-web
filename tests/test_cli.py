@@ -77,7 +77,11 @@ def test_fetch_options(server: Server) -> None:
     code, out, _ = run_cli("fetch", server.url("/html"), "--find", "content", "--json")
     assert code == 0
     assert '"matches": 1' in out
-    assert run_cli("fetch", server.url("/html"), "--max-chars", "0")[0] == 1
+    assert run_cli("fetch", server.url("/html"), "--max-chars", "-1")[0] == 1
+    code, out, _ = run_cli("fetch", server.url("/html"), "--max-chars", "0")
+    assert code == 0
+    assert "Full text: " in out
+    assert "# Hello" not in out
 
 
 def test_fetch_failures() -> None:
