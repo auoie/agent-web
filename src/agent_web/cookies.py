@@ -16,6 +16,8 @@ from agent_web.urls import domain_matches
 # fingerprint and cookies tell the same story.
 _IMPERSONATE = {"firefox": "firefox", "librewolf": "firefox"}
 DEFAULT_IMPERSONATE = "chrome"
+# An expiry above this is in milliseconds (in seconds, it would be past the year 5000).
+MILLISECONDS_THRESHOLD = 100_000_000_000
 
 CookieLoader = Callable[[str, str, Path | None], "list[Cookie] | CookieReadFailure"]
 
@@ -64,7 +66,13 @@ def load_browser_cookies(
         # and its own bugs: an AttributeError for a non-cookie database, see
         # tests/test_browser_cookies.py). Reading cookies failing must never crash `web`.
         return CookieReadFailure(browser, f"{type(e).__name__}: {e}")
-    return list(jar)
+    cookies = list(jar)
+    for cookie in cookies:
+        # Recent Firefox stores expiry in milliseconds and browser_cookie3 passes it through, so
+        # no cookie looked expired and stale ones were sent (Google's short-lived __Secure-STRP).
+        if cookie.expires and cookie.expires > MILLISECONDS_THRESHOLD:
+            cookie.expires //= 1000
+    return cookies
 
 
 def _path_matches(request_path: str, cookie_path: str) -> bool:

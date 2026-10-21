@@ -7,7 +7,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from agent_web.cookies import AllowlistCookieSource, load_browser_cookies
+from agent_web.cookies import AllowlistCookieSource, cookies_for_url, load_browser_cookies
 from agent_web.failures import CookieReadFailure
 from agent_web.search.google import signed_in
 
@@ -47,6 +47,22 @@ def test_reads_firefox_cookies(tmp_path: Path) -> None:
     google = load_browser_cookies("firefox", "google.com", db)
     assert isinstance(google, list)
     assert signed_in(google)
+
+
+def test_expiry_in_milliseconds_is_understood(tmp_path: Path) -> None:
+    # Firefox 1xx writes expiry in milliseconds; an expired cookie must not be sent.
+    now_ms = int(time.time() * 1000)
+    db = firefox_db(
+        tmp_path / "cookies.sqlite",
+        [
+            (".google.com", "/", 1, now_ms - 60_000, "__Secure-STRP", "stale"),
+            (".google.com", "/", 1, now_ms + 3_600_000, "SID", "sid"),
+        ],
+    )
+    cookies = load_browser_cookies("firefox", "google.com", db)
+    assert isinstance(cookies, list)
+    assert all(c.expires is not None and c.expires < 10**11 for c in cookies)
+    assert cookies_for_url(cookies, "https://www.google.com/search?q=x") == {"SID": "sid"}
 
 
 def test_missing_or_wrong_file_is_a_failure(tmp_path: Path) -> None:
