@@ -94,8 +94,10 @@ the question, read around it with `--offset`, then quote the exact text with its
   with a distinctive word first instead of paging through with `--offset`.
 - **Raising `--max-chars` a lot.** Your harness may cut long command output (Claude Code cuts it
   at 30,000 characters), so the end gets lost. Keep the default and continue with `--offset`.
-  When batching fetches, divide the available tool-output budget across commands and leave room
-  for metadata.
+- **Fetching several pages in one tool call.** Each `web fetch` prints up to `--max-chars` on its
+  own, but your harness's output limit applies to the whole call: `web fetch A; web fetch B` can
+  print 50,000 characters, and the end gets cut. Fetch pages in separate calls, or give each a
+  smaller `--max-chars` (e.g. 5,000 each for five pages) and continue in the useful ones.
 - **Firing off many searches at once.** Searches are spaced 2 seconds apart to protect the user's
   Google account, so they queue up. Run a few, read the results, then refine.
 - **Retrying a blocked page.** If a Note says the page is a bot check or an error page, retrying

@@ -120,6 +120,17 @@ def test_same_page_links(pandoc: Pandoc) -> None:
     assert "[![icon](https://example.com/dir/i.png)](#icon)" in out
 
 
+def test_icon_permalinks_are_dropped(pandoc: Pandoc) -> None:
+    # GitHub's heading anchors hold an svg icon; Mintlify's add a zero-width space.
+    out = md(
+        '<h2><a class="anchor" aria-label="Permalink: Install" href="#install">'
+        '<svg class="octicon"><path d="M0 0"/></svg></a>Install</h2>'
+        '<h2>Usage<a href="#usage">​<span><svg><path d="M0 0"/></svg></span></a></h2>',
+        pandoc,
+    )
+    assert out == "## Install\n\n## Usage"
+
+
 def test_layout_wrappers_and_junk_are_removed(pandoc: Pandoc) -> None:
     out = md(
         """<div class="page" id="main"><span class="x">Real text</span></div>
@@ -133,18 +144,34 @@ def test_layout_wrappers_and_junk_are_removed(pandoc: Pandoc) -> None:
 
 @pytest.mark.parametrize("level", range(1, 7))
 def test_layout_wrappers_inside_headings_keep_section_context(pandoc: Pandoc, level: int) -> None:
+    # Mintlify's markup (modelcontextprotocol.io), with a zero-width space in the permalink.
     out = md(
-        f'<h{level}><div><a href="#security">\u200b</a></div>'
+        f'<h{level} id="security"><div class="absolute"><a href="#security" '
+        'aria-label="Navigate to header">\u200b<div><svg><path d="M0 0"/></svg></div></a></div>'
         f"<div><div>Security <span>Considerations</span></div></div></h{level}>"
         "<p>Validate all inputs.</p>",
         pandoc,
     )
-    heading = f"{'#' * level} [\u200b](#security) Security Considerations"
+    heading = f"{'#' * level} Security Considerations"
     assert out == f"{heading}\n\nValidate all inputs."
     passages, total = find_passages(out, "Validate", 1000)
     assert total == 1
     assert passages[0].context == heading
     assert out[passages[0].offset :].startswith("Validate all inputs.")
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        "<div><p>Security</p><p>Considerations</p></div>",
+        "<section>Security Considerations</section>",
+        "<header><div><p>Security</p></div>Considerations</header>",
+        "Security<br>Considerations",
+    ],
+)
+def test_blocks_and_line_breaks_inside_headings_are_unwrapped(pandoc: Pandoc, inner: str) -> None:
+    out = md(f"<h2>{inner}</h2><p>Body.</p>", pandoc)
+    assert out == "## Security Considerations\n\nBody."
 
 
 def test_heading_wrappers_keep_word_boundaries_and_inline_formatting(pandoc: Pandoc) -> None:

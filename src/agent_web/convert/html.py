@@ -58,6 +58,12 @@ _BOILERPLATE_TAGS = frozenset({"nav", "header", "footer", "aside", "menu", "form
 
 # Text of "permalink to this heading" anchors (Sphinx, MkDocs, GitHub, ...): noise for a reader.
 _PERMALINK_TEXT = frozenset({"¶", "#", "§", "🔗", "link", "permalink", "anchor"})
+# What some sites put in an otherwise empty anchor (Mintlify writes a zero-width space).
+_ZERO_WIDTH = "​‌‍⁠﻿"
+
+# Inside a heading, pandoc ends the heading at these: layout blocks wrapped around the title
+# (Mintlify uses <div>s) and line breaks. They are unwrapped.
+_HEADING_SPLITTERS = ("div", "p", "section", "article", "header", "footer", "br")
 
 # Hidden fragments shorter than this (counters, icons) can't carry an instruction; they stay in
 # the text unlabeled instead of triggering a note.
@@ -186,17 +192,23 @@ def _tidy_same_page_links(doc: lxml.html.HtmlElement, page_url: str) -> None:
         href = link.get("href") or ""
         if not href.startswith(page + "#"):
             continue
-        text = " ".join(link.text_content().split())
-        if len(link) == 0 and text.lower() in _PERMALINK_TEXT | {""}:
+        text = " ".join(link.text_content().split()).strip(_ZERO_WIDTH)
+        # An icon (svg) is dropped later anyway; an image is content.
+        if text.lower() in _PERMALINK_TEXT | {""} and next(link.iter("img"), None) is None:
             _remove(link)
         else:
             link.set("href", href[len(page) :])
 
 
 def _inline_heading_wrappers(doc: lxml.html.HtmlElement) -> None:
-    """Keep layout divs inside headings from splitting their text into separate Pandoc blocks."""
+    """Keep each heading on one line through pandoc.
+
+    pandoc turns `<h2><div>Title</div></h2>` into an empty `##` and a separate paragraph, drops
+    the heading around a `<section>` or `<header>`, and breaks it at a `<br>`. (A `<p>` directly
+    inside a heading can't be helped: libxml2 already ended the heading there while parsing.)
+    """
     for heading in doc.iter("h1", "h2", "h3", "h4", "h5", "h6"):
-        for wrapper in list(heading.iterdescendants("div")):
+        for wrapper in list(heading.iterdescendants(*_HEADING_SPLITTERS)):
             if not isinstance(wrapper, lxml.html.HtmlElement):
                 continue
             # Hidden text has already been labeled. Keep inline children and a space at each

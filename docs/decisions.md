@@ -88,13 +88,15 @@ search APIs weren't needed for that; they remain an option for later (see TODO.m
   similar, the `hidden` attribute, fragments of 12+ characters), `<noscript>` content, and
   invisible Unicode tag characters. Removing it would hide the fact that a page addresses agents
   invisibly. Stylesheet-based hiding can't be seen without a browser.
-- In-page links become `#fragment` and permalink `¶` anchors are dropped (cheap, lossless).
+- In-page links become `#fragment` and permalink anchors (`¶`, `#`, an icon or a zero-width
+  space) are dropped (cheap, lossless).
 - `<time>` dates shown without a year get their machine-readable timestamp.
 - libxml2 (lxml) predates HTML5 and, when `<body>` is implicit, puts `<main>`, `<section>` and the
   rest into `<head>`, where pandoc ignores them. The pre-pass moves them back.
-- Layout `<div>` wrappers inside headings are unwrapped before pandoc, after hidden-text
-  labeling. Otherwise pandoc splits the title into an empty heading and separate paragraphs,
-  losing section context for `--find`. Spaces preserve word boundaries; inline formatting stays.
+- Block elements (`<div>`, `<p>`, `<section>`, …) and `<br>` inside headings are unwrapped before
+  pandoc, after hidden-text labeling. Otherwise pandoc splits the title into an empty heading and
+  separate paragraphs, drops the heading, or breaks it at the line break, losing section context
+  for `--find`. Spaces preserve word boundaries; inline formatting stays.
 - If pandoc fails or keeps less than half of the visible text, plain text is shown instead, with a
   note.
 

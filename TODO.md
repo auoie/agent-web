@@ -9,6 +9,12 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
   jump to a section with `--offset`.
 - **Section links:** for a URL with a `#fragment`, return just that section instead of the page
   from the top.
+- **Context around `--find` matches:** also show the block before and after each matching block,
+  merging overlaps, within the same `--max-chars` budget, and say how many matches that leaves
+  out. A match is often a heading, or a sentence whose meaning depends on its neighbors ("this
+  approach", a caveat that follows). `--find 'Security Considerations'` on the MCP spec's tools
+  page returns the table of contents and the bare heading; reading the section takes another call
+  with `--offset`.
 - **PDF tables:** pymupdf garbles some tables (wrong columns on the Attention paper's Table 2). An
   opt-in engine such as Docling would be more accurate but is heavy (GBs of models). For now, have
   the agent use a PDF-specific tool when tables matter.

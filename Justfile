@@ -1,4 +1,4 @@
-# Run `just` to see recipes. `just check` is what CI runs.
+# Run `just` to see recipes. Run `just check` before committing.
 
 default:
     @just --list
