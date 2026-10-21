@@ -80,7 +80,8 @@ agents' searches (see below).
   results. Refreshed cookies are kept for at most 10 minutes (long-lived ones it touched, like
   `SIDCC`, mustn't shadow newer ones from the user's browsing). At most one refresh a minute
   across processes, under a lock; a search blocked sooner reuses that refresh's cookies, and a
-  retry that is still blocked pauses as before. Each refresh is logged
+  retry that is still blocked, or that can't be sent because the budget is used up, pauses as
+  before (on 2026-10-21 a refresh took the budget's last slot and Google wasn't paused). Each refresh is logged
   (`~/.cache/agent-web/google-refresh.log`, the last three in `web doctor`) to learn whether one
   refresh clears a block for a while or Google wants one per search. Off with
   `search.browser_refresh = false`. Chrome-family browsers aren't supported yet: they'd need their

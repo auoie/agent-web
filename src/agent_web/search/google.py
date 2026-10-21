@@ -330,8 +330,12 @@ def search(
             refresher.log(f"refresh failed: {refreshed}")
         else:
             retry_cookies = overlay(cookies, refreshed.cookies)
-            outcome = _attempt(url, config, retry_cookies, downloader, limiter, budget_wait, sleep)
-            refresher.log(f"{refreshed.how}; the retry {_retry_result(outcome)}")
+            retried = _attempt(url, config, retry_cookies, downloader, limiter, budget_wait, sleep)
+            refresher.log(f"{refreshed.how}; the retry {_retry_result(retried)}")
+            # Only an answer from Google replaces its check: a retry that couldn't be sent (the
+            # budget was used up) leaves the check unanswered, so searches still pause.
+            if isinstance(retried, list | Captcha | JavaScriptWall):
+                outcome = retried
     if isinstance(outcome, Captcha | JavaScriptWall):
         cause = "a captcha" if isinstance(outcome, Captcha) else "its JavaScript check"
         limiter.pause(cause, SEARCH_PAUSE_MINUTES * 60)

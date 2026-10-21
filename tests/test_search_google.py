@@ -523,3 +523,15 @@ def test_rate_limiter_budget_is_a_rolling_window(tmp_path: Path) -> None:
     assert limiter().wait() is None
     assert limiter().requests_in_window() == 3
     assert RateLimiter(state, 0, budget=0, now=lambda: clock[0]).wait() is None  # 0: no limit
+
+
+def test_a_check_whose_retry_isnt_sent_still_pauses(config: Config) -> None:
+    refresher = FakeRefresher(Refreshed([SG_SS], "headless firefox, 0.9 s"))
+    limiter = QueueLimiter([None, OverBudget(20, 300.0)])  # the refresh took the last slot
+    outcome, sent = refreshing_search(config, [JS_CHECK], refresher, limiter)
+    assert outcome == JavaScriptWall("Google")
+    assert len(sent) == 1
+    assert limiter.pauses == [("its JavaScript check", 600)]
+    assert refresher.lines == [
+        "headless firefox, 0.9 s; the retry wasn't sent: the Google budget was used up"
+    ]
