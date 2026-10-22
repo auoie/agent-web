@@ -71,22 +71,22 @@ agents' searches (see below).
   into retry loops; the cookies were fine. A search 2.5 hours later worked.
 - **Google's JavaScript check is passed with a headless Firefox, then the search is retried**
   (`search/refresh.py`). The check is a page of JavaScript that a browser runs to prove it is one;
-  agent-web can't run JavaScript, and reimplementing what it computes was ruled out (it is
-  Google's anti-automation code, and would break when Google changes it). Instead, Firefox runs it:
-  a throwaway profile holding only the user's Google cookies loads the blocked search with
-  `--headless --screenshot` (about 1-2 s) and gets the cookies the check sets: `SG_SS` (30 s) and
+  agent-web can't run JavaScript, and reimplementing what it computes was ruled out (it is Google's
+  anti-automation code, and would break when Google changes it). Instead, Firefox runs it: a
+  throwaway profile holding only the user's Google cookies loads the blocked search with `--headless
+  --screenshot` (about 1-2 s) and gets the cookies the check sets: `SG_SS` (30 s) and
   `__Secure-STRP` (5 min). Tested on a live block on 2026-10-21: a plain request got the check at
-  19:35:02, the refresh took 0.9 s, and the retry with its cookies at 19:35:07 got normal
-  results. Refreshed cookies are kept for at most 10 minutes (long-lived ones it touched, like
-  `SIDCC`, mustn't shadow newer ones from the user's browsing). At most one refresh a minute
-  across processes, under a lock; a search blocked sooner reuses that refresh's cookies, and a
-  retry that is still blocked, or that can't be sent because the budget is used up, pauses as
-  before (on 2026-10-21 a refresh took the budget's last slot and Google wasn't paused). Each refresh is logged
+  19:35:02, the refresh took 0.9 s, and the retry with its cookies at 19:35:07 got normal results.
+  Refreshed cookies are kept for at most 10 minutes (long-lived ones it touched, like `SIDCC`,
+  mustn't shadow newer ones from the user's browsing). At most one refresh a minute across
+  processes, under a lock; a search blocked sooner reuses that refresh's cookies, and a retry that
+  is still blocked, or that can't be sent because the budget is used up, pauses as before (on
+  2026-10-21 a refresh took the budget's last slot and Google wasn't paused). Each refresh is logged
   (`~/.cache/agent-web/google-refresh.log`, the last three in `web doctor`) to learn whether one
   refresh clears a block for a while or Google wants one per search. Off with
   `search.browser_refresh = false`. Chrome-family browsers aren't supported yet: they'd need their
-  own code (a headless Chrome, and Chrome encrypts cookie values). Not done (yet): refreshing
-  before the 5-minute `__Secure-STRP` runs out, which a browser does on every search.
+  own code (a headless Chrome, and Chrome encrypts cookie values). Not done (yet): refreshing before
+  the 5-minute `__Secure-STRP` runs out, which a browser does on every search.
 - **At most 20 Google searches per 10 minutes, shared by all agents**
   (`search.google_searches_per_10_minutes`; the limiter keeps each request's start time in its
   state file). From the 2026-10-21 transcripts: Google blocked agents' searches after 29, 27, 38
@@ -98,7 +98,7 @@ agents' searches (see below).
   up; otherwise a search waits for a slot if one frees up within 30 s (a shell tool call can wait
   that long) and else says when the next is possible (exit 4) without contacting Google. The
   budget is an estimate from one day: Google's thresholds aren't published and may vary.
-- **Brave answers when Google can't** (`search/brave.py`, `search/dispatch.py`), with the
+- **Brave answered when Google couldn't** (first in `search/brave.py`), with the
   user's Brave Search API key. This was the plan agreed before building the refresh, for the case
   that refreshes don't keep agents searching. Brave over Firecrawl (whose free plan has no card
   but gives 500 searches a month at 10 a minute, from an undocumented source): about 1,000 free
@@ -113,8 +113,62 @@ agents' searches (see below).
   a middleman for the queries it answers, accepted to keep agents searching. The key comes from
   `BRAVE_SEARCH_API_KEY`, else the config file (`web doctor` warns if others can read it, `web
   config` doesn't print it). Brave's per-second limit (HTTP 429) is retried twice after 1.1 s, and
-  the limit headers of its last answer are shown by `web doctor`. `search.engine = "brave"` sends
-  every search to Brave and leaves the Google account alone.
+  the limit headers of its last answer were shown by `web doctor`.
+- **Then a chain of free tiers** (`search/apis.py`, `search/ledger.py`, `search/dispatch.py`). The
+  agents used about half of Brave's monthly free credit in one evening (searches beyond Google's
+  budget, many run from the agents' own scripts), and the user chose to stack free tiers rather
+  than pay or cap. Researched on 2026-10-21: Brave ($5 a month), SerpAPI (250 Google searches a
+  month), Tavily (1,000 a month), Exa ($10 a month), Parallel ($5 a month), Firecrawl (500 a
+  month), LangSearch (free daily allowance), Serper (2,500 Google searches once). Left out: Google
+  Custom Search (closed to new customers, ends 2027-01-01), You.com (its free tier is only through
+  its MCP server), Linkup (free credit unclear), one-time trials of 100 searches. Each API is a
+  table entry: how to ask for one page (one request; APIs without an offset are asked for the
+  first N pages and sliced), and where title, URL and snippet are in its JSON. Only answers
+  without a model in between are used (Tavily's `include_answer` stays off). `site:`/`-site:`
+  become domain filters where an API has them, since Exa's docs say it doesn't read `site:` in the
+  query. A shared ledger counts each API's searches per month for `web doctor` (Brave's own
+  headers report no monthly cap on its credit plan, so usage can't be read from them) and skips
+  an API that couldn't answer: until the next UTC day when it's out of credit (HTTP 402/432/433 or
+  a message about credit or quota), an hour when it rejected the key, a minute otherwise. Keys
+  moved to a `[keys]` table, one environment variable each; the user's Brave key was moved there
+  (the old `search.brave_api_key` is an error now, not an alias). The adapters other than Brave
+  were written from each API's documentation and test answers shaped like its examples; each
+  is checked live (`just test-live`) once its key is added.
+- **Each search API is paced under its documented free-tier rate limit** (`Api.rate`, a rolling
+  window per API in the ledger): Brave 50 a second, SerpAPI 50 an hour, Tavily 100 a minute
+  (development key), Exa 10 a second, Parallel 600 a minute (kept as 10 a second, so the window
+  stays small), Firecrawl 10 a minute, LangSearch 5 a second (plus token limits it doesn't
+  publish), Serper 50 a second. A search waits up to 3 s for a slot, else the next API answers
+  and the note says which was at its limit. HTTP 429 is read by its wording: "rate limit", "too
+  many requests" and the like mean a short skip (its `Retry-After`, else a minute), while credit,
+  quota, daily or monthly wording means out of credit. The first version matched "exceed", so
+  Brave's per-second "Request rate limit exceeded" would have skipped Brave until midnight.
+- **Operator queries go first to the engines that understand them; queries are never rewritten**
+  (`Api.operators`, `operators_used()`). From their docs: SerpAPI, Serper and Brave take
+  Google-style operators; Firecrawl lists quotes, `-`, `site:`, `filetype:`, `inurl:`, `intitle:`
+  (no `OR`); Tavily honors quoted phrases through `exact_match`; Exa, Parallel and LangSearch take
+  natural language plus domain filters (Exa's `includeText`/`excludeText` are deprecated and
+  word-level). A version that stripped the operators an engine can't read (so `-senior` wouldn't
+  ask a meaning-based search for "senior") was dropped: the user doesn't want agents' queries
+  modified. The query is sent as written, and when an engine that doesn't understand some of its
+  operators answers, the note says which, so the agent knows the results may not match them. Two
+  translations stay, because they carry out an operator rather than change the query: `site:` and
+  `-site:` become an API's domain filters, and quoted phrases turn on Tavily's `exact_match`.
+  The skill tells agents that other engines support fewer operators and that the note says so.
+- **Result quality, as the user saw it on 2026-10-21:** Google best, Brave and Tavily fine, Exa
+  weak on a person's name (it ranks by meaning, not words), SerpAPI poor. SerpAPI's "Google"
+  results for `pandoc lua filter tables` missed Google's top hits (pandoc.org's Lua filters page)
+  even with only `engine` and `q` sent, so it isn't the adapter's `start`/`num`: its results come
+  from Google without the user's session or location, from SerpAPI's servers.
+- **Firecrawl is also asked without a key, if the user says so** (`search.keyless`, or listing it
+  in `search.fallbacks`; `--engine firecrawl` counts too). Its docs allow keyless Search capped per
+  IP address per day (the numbers aren't published), and it worked from the user's IP on
+  2026-10-21. Off by default: with it on, every user's overflow queries would go to a third party
+  they never chose, which the README's privacy section rules out. First live run with the user's
+  keys (2026-10-21): Brave, SerpAPI, Tavily and keyless Firecrawl returned results; Exa answered
+  HTTP 402 "You have exceeded your credits limit" until the user sorted out the account, then
+  returned 10 results with highlights. An API that is out of credit is skipped until the next UTC
+  day, but `--engine NAME` asks it anyway, so it can be checked right after topping up.
 - **Each search is one request for one results page** (`--page N`, 1-5, default 1), and all of
   its 8-10 results are returned. The output ends with the command for the next page, like
   `web fetch`'s `--offset` hint. A result count (`-n`, removed without an alias) either made a

@@ -176,7 +176,7 @@ def test_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
         "searches paused for 5 more minute(s): Google answered a search with its JavaScript" in out
     )
     assert "google:   searches in the last 10 minutes: 0 of 20 allowed" in out
-    assert "brave:    no API key: searches stop while Google is paused" in out
+    assert "search:   no key for: brave, serpapi, tavily" in out
 
 
 def test_doctor_and_config_with_a_brave_key(
@@ -197,21 +197,40 @@ def test_doctor_and_config_with_a_brave_key(
     monkeypatch.setattr("agent_web.convert.pandoc.find_pandoc", pandoc)
     path = tmp_path / "config" / "agent-web" / "config.toml"
     path.parent.mkdir(parents=True)
-    path.write_text('[search]\nbrave_api_key = "SECRET-KEY"\n', encoding="utf-8")
+    path.write_text('[keys]\nbrave = "SECRET-KEY"\n', encoding="utf-8")
     path.chmod(0o644)
     code, out, _ = run_cli("doctor")
     assert code == 1
-    assert f"brave:    API key set ({path}); answers when Google can't" in out
-    assert "others can read it: chmod 600" in out
+    assert (
+        "brave:    key from the config file; 0 searches this month; free tier: $5 of credit" in out
+    )
+    assert "holds API keys and others can read it: chmod 600" in out
+    assert (
+        "search:   no key for: serpapi, tavily, exa, parallel, firecrawl, langsearch, serper" in out
+    )
     path.chmod(0o600)
     code, out, _ = run_cli("doctor")
     assert code == 0
-    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "ENV-KEY")
+    monkeypatch.setenv("TAVILY_API_KEY", "ENV-KEY")
     code, out, _ = run_cli("doctor")
-    assert "API key set (BRAVE_SEARCH_API_KEY)" in out
+    assert "tavily:   key from TAVILY_API_KEY; 0 searches this month" in out
+    path.write_text('[search]\nkeyless = true\n[keys]\nbrave = "SECRET-KEY"\n', encoding="utf-8")
+    code, out, _ = run_cli("doctor")
+    assert "firecrawl: no key: asked keyless; 0 searches this month" in out
+    path.write_text(
+        '[search]\nfallbacks = ["tavily"]\nengine = "exa"\n[keys]\nbrave = "SECRET-KEY"\n',
+        encoding="utf-8",
+    )
+    code, out, _ = run_cli("doctor")
+    assert code == 1
+    assert "search:   NO API KEY for exa, the first engine (search.engine)" in out
+    assert "exa:" not in out.replace("for exa,", "")  # not also listed as usable
+    assert "search:   keys not used (not in search.fallbacks): brave" in out
+    assert "no key for: serpapi, exa, parallel, firecrawl, langsearch, serper" in out
     code, out, _ = run_cli("config")
-    assert "brave_api_key = (set, not shown)" in out
-    assert "KEY" not in out.replace("brave_api_key", "")
+    assert "api_keys = ['brave', 'tavily']" in out
+    assert "SECRET" not in out
+    assert "ENV-KEY" not in out
 
 
 def test_split_search_query_explains_quoting() -> None:

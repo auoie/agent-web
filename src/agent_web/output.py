@@ -34,7 +34,7 @@ from agent_web.model import (
     RedditThread,
     ScannedPdf,
 )
-from agent_web.search import MAX_PAGE, SearchResults
+from agent_web.search import SearchResults
 
 FENCE_PREFIX = "untrusted-web-content"
 UNTRUSTED_NOTE = (
@@ -466,7 +466,7 @@ def render_search(results: SearchResults, fence: Callable[[], str] = new_fence) 
             lines.append(f"   {' '.join(result.snippet.split())}")
         lines.append("")
     lines.append(f"</{tag}>")
-    if results.page < MAX_PAGE:
+    if results.page < results.max_page:
         query = shlex.quote(results.query)
         # The next page comes from the same engine, so the pages line up.
         same = "" if engine == "Google" else f" --engine {engine.lower()}"

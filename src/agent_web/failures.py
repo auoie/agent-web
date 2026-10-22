@@ -99,7 +99,8 @@ class SearchBudgetUsed:
 
 @dataclass(frozen=True)
 class NoApiKey:
-    service: str
+    name: str  # the search API, as in the config: "tavily"
+    env: str  # the environment variable for its key
 
 
 @dataclass(frozen=True)
@@ -109,14 +110,18 @@ class SearchApiError:
     service: str
     status: int
     detail: str
+    retry_after: float = 0.0  # seconds it asked to wait (Retry-After), if any
+    used_up: bool = False  # its rate-limit headers say a longer quota (per month) is used up
 
 
 @dataclass(frozen=True)
-class FallbackFailed:
-    """The first engine couldn't answer, and neither could the one asked instead."""
+class NoEngineAnswered:
+    """The first engine couldn't answer (`primary`; None when it was a search API), and neither
+    could the search APIs tried after it: (name, why) for each, as in "Brave", "is out of
+    credit"."""
 
-    primary: Failure
-    fallback: Failure
+    primary: Failure | None
+    tried: tuple[tuple[str, str], ...]
 
 
 # After a captcha or JavaScript check, every process stops searching for this long: retrying
@@ -141,7 +146,7 @@ Failure: TypeAlias = (
     | SearchBudgetUsed
     | NoApiKey
     | SearchApiError
-    | FallbackFailed
+    | NoEngineAnswered
 )
 
 EXIT_OK = 0
@@ -174,8 +179,8 @@ def exit_code(failure: Failure) -> int:
             if status in (401, 403, 422):
                 return EXIT_USAGE
             return EXIT_BLOCKED if status in (402, 429) else EXIT_NETWORK
-        case FallbackFailed(primary=primary):
-            return exit_code(primary)
+        case NoEngineAnswered(primary=primary):
+            return EXIT_BLOCKED if primary is None else exit_code(primary)
         case _:
             assert_never(failure)
 
@@ -237,24 +242,27 @@ def describe(failure: Failure) -> str:
                 "minutes, the most agent-web allows: more makes "
                 f"{service} block searches for everyone. The next one is possible in "
                 f"{_duration(seconds_left)}. Work with the pages already found (web fetch still "
-                "works), or wait. (With a Brave Search API key in agent-web's config, Brave "
+                "works), or wait. (With a search API key in agent-web's config, another engine "
                 "would answer instead.)"
             )
-        case NoApiKey(service):
+        case NoApiKey(name, env):
             return (
-                f"no {service} Search API key: set the BRAVE_SEARCH_API_KEY environment variable "
-                "or search.brave_api_key in agent-web's config (web config --example)"
+                f'no API key for {name}: set the {env} environment variable, or {name} = "..." '
+                "under [keys] in agent-web's config (web config --example)"
             )
         case SearchApiError(service, status, detail):
-            message = f"the {service} Search API answered HTTP {status}"
+            message = f"the {service} API answered HTTP {status}"
             message += f": {detail}" if detail else ""
             if status in (401, 403, 422):
-                message += f". Check the {service} Search API key in agent-web's config"
+                message += f". Check the {service} API key in agent-web's config"
             elif status in (402, 429):
                 message += " (too many requests at once, or the month's credit is used up)"
             return message
-        case FallbackFailed(primary, fallback):
-            return f"{describe(primary)}. Brave couldn't answer instead: {describe(fallback)}"
+        case NoEngineAnswered(primary, tried):
+            reasons = "; ".join(f"{name} {why}" for name, why in tried)
+            if primary is None:
+                return f"no search engine could answer: {reasons}"
+            return f"{describe(primary)}. No search API could answer instead: {reasons}"
         case _:
             assert_never(failure)
 

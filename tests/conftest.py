@@ -13,13 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_web.config import Config
+from agent_web.config import API_KEY_ENV, Config
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The user's real home, for the opt-in live tests; every other test gets a temporary one.
 REAL_HOME = Path.home()
-# The user's Brave key, if set in the environment, for the opt-in live tests.
-REAL_BRAVE_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
+# Search API keys set in the user's environment, for the opt-in live tests.
+REAL_API_KEYS = {env: os.environ[env] for env in API_KEY_ENV.values() if os.environ.get(env)}
 
 requires_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc not installed")
 
@@ -36,7 +36,7 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "AGENT_WEB_CACHE_DIR",
         "AGENT_WEB_ALLOW_PRIVATE_NETWORKS",
         "AGENT_WEB_PANDOC",
-        "BRAVE_SEARCH_API_KEY",
+        *API_KEY_ENV.values(),
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -139,10 +139,17 @@ def server() -> Generator[Server]:
         def log_message(self, format: str, *args: object) -> None:
             return
 
-        def do_GET(self) -> None:
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.do_GET(body.decode("utf-8", "replace"))
+
+        def do_GET(self, body: str | None = None) -> None:
             srv = state["server"]
             path = self.path.split("?", 1)[0]
-            seen.setdefault(path, []).append(dict(self.headers.items()))
+            request = dict(self.headers.items())
+            if body is not None:
+                request["_body"] = body  # what was POSTed
+            seen.setdefault(path, []).append(request)
             entry = srv.routes.get(path)
             route = entry(self) if callable(entry) else entry
             if route is None:

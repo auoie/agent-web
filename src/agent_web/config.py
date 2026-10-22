@@ -15,8 +15,21 @@ from typing import Any, cast
 from agent_web.failures import InvalidConfig
 
 BROWSERS = ("firefox", "librewolf", "chrome", "chromium", "brave", "vivaldi", "edge", "opera")
-ENGINES = ("google", "brave")
-BRAVE_KEY_ENV = "BRAVE_SEARCH_API_KEY"
+# Search APIs that can answer when Google can't, with the environment variable for each one's key,
+# in the order they're tried by default (search/apis.py has the rest of each one's details).
+API_KEY_ENV = {
+    "brave": "BRAVE_SEARCH_API_KEY",
+    "serpapi": "SERPAPI_API_KEY",
+    "tavily": "TAVILY_API_KEY",
+    "exa": "EXA_API_KEY",
+    "parallel": "PARALLEL_API_KEY",
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "langsearch": "LANGSEARCH_API_KEY",
+    "serper": "SERPER_API_KEY",
+}
+ENGINES = ("google", *API_KEY_ENV)
+# Search APIs that also answer without a key (capped per IP address), when search.keyless is on.
+KEYLESS_APIS = frozenset({"firecrawl"})
 
 EXAMPLE_CONFIG = """\
 # agent-web configuration. Every key is optional.
@@ -33,15 +46,23 @@ min_interval_seconds = 2.0
 # (with a throwaway copy of your Google cookies) and retry, instead of pausing searches
 browser_refresh = true
 # Google requests allowed per 10 minutes across all agents (0: no limit). Google started blocking
-# agents' searches after 25-38 in 10 minutes; past this limit, searches go to Brave (if a key is
-# set below) or wait their turn
+# agents' searches after 25-38 in 10 minutes; past this limit, searches go to the search APIs
+# below (if a key is set) or wait their turn
 google_searches_per_10_minutes = 20
-# Which engine answers: "google" (Brave answers only while Google is paused or over the limit
-# above, if a key is set) or "brave" (every search)
+# Which engine answers first: google, brave, serpapi, tavily, exa, parallel, firecrawl, langsearch
+# or serper. When it can't, the search APIs with a key answer, in this order
 engine = "google"
-# Brave Search API key (https://api-dashboard.search.brave.com). The BRAVE_SEARCH_API_KEY
-# environment variable takes precedence. If you put it here, make this file private (chmod 600)
-# brave_api_key = "..."
+# fallbacks = ["brave", "serpapi", "tavily", "exa", "parallel", "firecrawl", "langsearch", "serper"]
+# Also use search APIs that answer without a key (Firecrawl: a daily cap per IP address); they see
+# the queries they answer. Search APIs listed in `fallbacks` are used keyless too.
+keyless = false
+
+[keys]
+# Search API keys (`web doctor` lists where to get them). Each has an environment variable that
+# takes precedence: BRAVE_SEARCH_API_KEY, SERPAPI_API_KEY, TAVILY_API_KEY, EXA_API_KEY,
+# PARALLEL_API_KEY, FIRECRAWL_API_KEY, LANGSEARCH_API_KEY, SERPER_API_KEY.
+# If you put keys here, make this file private (chmod 600)
+# brave = "..."
 
 [fetch]
 # Domains that receive your browser cookies when fetched (subdomains included).
@@ -88,7 +109,11 @@ class Config:
     browser_refresh: bool = True
     google_budget: int = 20
     search_engine: str = "google"
-    brave_api_key: str | None = None
+    # Search APIs to try when the first engine can't answer; None: every API that can be asked
+    # (usable()), in API_KEY_ENV's order.
+    fallbacks: tuple[str, ...] | None = None
+    keyless: bool = False
+    api_keys: dict[str, str] = field(default_factory=lambda: dict[str, str]())
     cookie_domains: tuple[str, ...] = ()
     timeout: float = 30.0
     max_download_bytes: int = 25 * 1024 * 1024
@@ -108,9 +133,11 @@ _SCHEMA: dict[str, frozenset[str]] = {
             "browser_refresh",
             "google_searches_per_10_minutes",
             "engine",
-            "brave_api_key",
+            "fallbacks",
+            "keyless",
         }
     ),
+    "keys": frozenset(API_KEY_ENV),
     "fetch": frozenset(
         {"cookie_domains", "timeout_seconds", "max_download_mb", "allow_private_networks"}
     ),
@@ -179,6 +206,21 @@ def _domains(table: Mapping[str, Any], key: str) -> tuple[str, ...] | None:
     return tuple(sorted({_domain(item, key) for item in items}))
 
 
+def _names(table: Mapping[str, Any], key: str) -> tuple[str, ...] | None:
+    """search.fallbacks: a list of search API names."""
+    if key not in table:
+        return None
+    value: object = table[key]
+    if not isinstance(value, list):
+        raise _Invalid(f"search.{key} must be a list of names")
+    names: list[str] = []
+    for item in cast("list[object]", value):
+        if not isinstance(item, str) or item.lower() not in API_KEY_ENV:
+            raise _Invalid(f"search.{key}: {item!r} isn't one of: {', '.join(API_KEY_ENV)}")
+        names.append(item.lower())
+    return tuple(dict.fromkeys(names))
+
+
 def _check_keys(data: Mapping[str, Any]) -> None:
     for name, value in data.items():
         if name not in _SCHEMA:
@@ -213,8 +255,14 @@ def _parse(data: Mapping[str, Any]) -> Config:
         if engine.lower() not in ENGINES:
             raise _Invalid(f"search.engine must be one of: {', '.join(ENGINES)}")
         config = replace(config, search_engine=engine.lower())
-    if (key := _string(search, "brave_api_key", "search")) is not None:
-        config = replace(config, brave_api_key=key)
+    if (fallbacks := _names(search, "fallbacks")) is not None:
+        config = replace(config, fallbacks=fallbacks)
+    if (keyless := _bool(search, "keyless", "search")) is not None:
+        config = replace(config, keyless=keyless)
+
+    keys = _table(data, "keys")
+    api_keys = {name: key for name in API_KEY_ENV if (key := _string(keys, name, "keys"))}
+    config = replace(config, api_keys=api_keys)
 
     fetch = _table(data, "fetch")
     if (cookie_domains := _domains(fetch, "cookie_domains")) is not None:
@@ -258,8 +306,11 @@ def apply_env(config: Config) -> Config:
         config = replace(config, allow_private_networks=True)
     if pandoc := os.environ.get("AGENT_WEB_PANDOC"):
         config = replace(config, pandoc=pandoc)
-    if key := os.environ.get(BRAVE_KEY_ENV, "").strip():
-        config = replace(config, brave_api_key=key)
+    from_env = {
+        name: key for name, env in API_KEY_ENV.items() if (key := os.environ.get(env, "").strip())
+    }
+    if from_env:
+        config = replace(config, api_keys={**config.api_keys, **from_env})
     return config
 
 
@@ -275,3 +326,16 @@ def load_config(path: Path | None = None) -> Config | InvalidConfig:
     if isinstance(parsed, InvalidConfig):
         return InvalidConfig(f"{path}: {parsed.message}")
     return apply_env(parsed)
+
+
+def usable(config: Config, name: str) -> bool:
+    """Whether search API `name` can be asked: it has a key, or answers without one and the
+    user allowed that (search.keyless, or by listing it in search.fallbacks)."""
+    listed = config.fallbacks is not None and name in config.fallbacks
+    return name in config.api_keys or (name in KEYLESS_APIS and (config.keyless or listed))
+
+
+def fallback_order(config: Config) -> tuple[str, ...]:
+    """The search APIs to try after the first engine, in order: those that can be asked."""
+    order = config.fallbacks if config.fallbacks is not None else tuple(API_KEY_ENV)
+    return tuple(n for n in order if usable(config, n) and n != config.search_engine)

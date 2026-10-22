@@ -60,13 +60,15 @@ def download(
     impersonate_with_cookies: str = "chrome",
     impersonate_anonymous: str = "chrome",
     extra_headers: dict[str, str] | None = None,
+    post: bytes | None = None,
 ) -> HttpResponse | DownloadFailure:
-    """GET `url`, following redirects ourselves so every hop gets its own checks.
+    """GET `url` (or POST `post` to it), following redirects ourselves so every hop gets its own
+    checks.
 
     Each hop is validated (scheme, credentials, private addresses, with the connection pinned to
     the checked addresses) and gets cookies only if `cookie_source` returns some for that exact
     URL, so a redirect never carries cookies to another site. Bodies larger than `max_bytes` are
-    refused.
+    refused. A POST (to a search API) isn't redirected: its answer is returned as it is.
     """
     from curl_cffi import CurlOpt
     from curl_cffi import requests as curl_requests
@@ -94,8 +96,10 @@ def download(
         target = impersonate_with_cookies if cookies else impersonate_anonymous
         with curl_requests.Session[curl_requests.Response](curl_options=options) as session:
             try:
-                response = session.get(
+                send = session.get if post is None else session.post
+                response = send(
                     current,
+                    data=post,
                     cookies=cookies or None,
                     headers=extra_headers,
                     impersonate=target,
@@ -106,7 +110,7 @@ def download(
             except curl_requests.RequestsError as e:
                 return NetworkFailure(current, _short(e))
             location = response.headers.get("location")
-            if response.status_code in REDIRECT_CODES and location:
+            if response.status_code in REDIRECT_CODES and location and post is None:
                 response.close()
                 next_url = validate_url(urljoin(current, location))
                 if isinstance(next_url, InvalidUrl):

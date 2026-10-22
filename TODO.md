@@ -21,10 +21,14 @@ Not planned yet; kept simple for now. Research behind these: `docs/alternatives.
 - **More site rules** like the Reddit one, e.g. YouTube transcripts or Hacker News threads
   (Defuddle has extractors for these). Also from Defuddle: strip line numbers from code blocks.
 - **Tuning the Google budget:** 20 searches per 10 minutes comes from one day of blocks (after
-  25-38). Only refreshes are logged; logging each block with the number of searches before it
-  would show whether 20 is too strict or too loose.
-- **Firecrawl as another fallback engine:** its free plan needs no card (500 searches a month,
-  10 a minute), so it could serve users without a Brave key.
+  25-38). It holds off bursts, but sustained use is another matter: on 2026-10-21 agents kept
+  Google at the full 20 for over an hour, Google challenged them at 21:42, and the user then got
+  a captcha in their own browser. The user chose to keep 20. Only refreshes are logged; logging
+  each block with the number of searches before it would show where Google's limit really is.
+- **Search APIs without a live check yet:** Parallel, LangSearch and Serper were built from their
+  docs. When a key is added, `just test-live -k test_search_api` runs one real search per API.
+  Parallel's search may want an `objective` and several short queries for its best results; it
+  gets the query as one.
 - **Refreshing Google's token before it runs out:** a browser gets a fresh `__Secure-STRP` (5
   minutes) on every search, agent-web only after Google challenges it. If
   `~/.cache/agent-web/google-refresh.log` shows a refresh on nearly every search during busy

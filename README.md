@@ -22,17 +22,19 @@ and conversion problems are reported in `Note:` lines; long output can be read i
 ## What it does
 
 - **`web search 'query'`** prints Google results (title, URL, snippet) using your browser's signed-in
-  Google session. All Google operators work. Each search fetches one results page (usually 8-10
+  Google session. All Google operators work (the search APIs below support fewer; see
+  [Search fallbacks](#search-fallbacks)). Each search fetches one results page (usually 8-10
   results) with one request; `--page 2` to `--page 5` get the next ones, and the output ends with
   the command for the next page.
-  - **Brave answers when Google can't** (optional, with a
-    [Brave Search API key](#brave-search-fallback)): while Google searches are paused, when Google
-    blocks one, or when the agents have used up the Google budget below. The first line says which
-    engine answered and a `Note:` says why, so agents never have to stop searching.
+  - **Search APIs answer when Google can't** (optional, with [API keys](#search-fallbacks)):
+    while Google searches are paused, when Google blocks one, or when the agents have used up the
+    Google budget below. Brave, SerpAPI, Tavily, Exa, Parallel, Firecrawl, LangSearch and Serper
+    are tried in turn, mostly on their free tiers. The first line says which engine answered and a
+    `Note:` says why, so agents never have to stop searching.
   - **A Google budget shared by all agents:** at most 20 Google searches per 10 minutes. Google
-    started blocking agents' searches after 25-38 in 10 minutes. Past the budget, Brave answers;
-    without a Brave key, a search waits up to 30 seconds for its turn or says when the next one
-    is possible.
+    started blocking agents' searches after 25-38 in 10 minutes. Past the budget, a search API
+    answers; without any API key, a search waits up to 30 seconds for its turn or says when the
+    next one is possible.
 - **`web fetch URL`** prints the page's own text:
   - **HTML** becomes markdown via pandoc plus a cleanup filter. Layout wrappers and attributes are
     removed. Simple tables become markdown tables. Tables with merged cells stay HTML tables, so
@@ -104,10 +106,10 @@ Set `TURNDOWN_DIR` to a folder with `node_modules/turndown` to include the WebFe
 
 ## Privacy
 
-There are no proxies, and no middlemen unless you add the Brave fallback:
-- **Searches** go from your machine to Google. With a Brave Search API key, the searches Google
-  refuses (or every search, with `search.engine = "brave"`) go to Brave instead, which sees those
-  queries. No cookies go to Brave.
+There are no proxies, and no middlemen unless you add search API keys (or `search.keyless`):
+- **Searches** go from your machine to Google. With search API keys, the searches Google refuses
+  go to those APIs instead (or every search, with `search.engine` set to one of them), and each
+  sees the queries it answers. No cookies go to them.
 - **Pages** are fetched directly from your machine.
 - **Your model provider** sees what the agent reads, as with anything else in the conversation.
 - **Your browser cookies** are sent only to Google (for search) and to domains you explicitly list in
@@ -133,7 +135,7 @@ contain instructions aimed at agents ("visit /a, then /b…"). This is the
 > refusing links found inside fetched pages without approval. agent-web has no such check (an
 > earlier version had one as Claude Code hooks; it was removed to keep the tool agent-neutral).
 > To avoid the risk, keep `web fetch` on "ask" for agents that handle private data. Allowing
-> `web search` is lower risk: queries go only to Google (and Brave, if you set it up).
+> `web search` is lower risk: queries go only to Google (and the search APIs you add keys for).
 
 What agent-web does do:
 
@@ -154,7 +156,7 @@ What agent-web does do:
 - **pandoc runs with `--sandbox`**, so converting a hostile page can't read files.
 - **Limits:** a 25 MB download cap, a 30 s timeout, at most 10 redirects, at least 2 s between
   Google requests and at most 20 of them per 10 minutes (shared across processes; past that,
-  Brave answers if set up). When Google answers with its JavaScript check, a
+  a search API answers if set up). When Google answers with its JavaScript check, a
   headless Firefox runs the check and the search is retried once (at most one such refresh a
   minute). After a captcha, or a check the refresh doesn't get past, searches pause for 10
   minutes for every process: retrying during a block keeps it going.
@@ -170,8 +172,8 @@ to auto-approving shell commands in general.
 - A browser signed in to Google (Firefox by default; Chrome, Chromium, Brave, Vivaldi, Edge, Opera
   and LibreWolf also work). Linux or macOS. Getting past Google's JavaScript check needs Firefox
   or LibreWolf installed, since it runs them headless.
-- Optional: a Brave Search API key, so searches continue when Google refuses them (see
-  [Brave search fallback](#brave-search-fallback)).
+- Optional: search API keys, so searches continue when Google refuses them (see
+  [Search fallbacks](#search-fallbacks)).
 
 ## Install
 
@@ -260,41 +262,81 @@ cookie_domains = ["reddit.com"]   # sites that get your browser session; default
 min_interval_seconds = 2.0
 browser_refresh = true                # run Google's JavaScript check in headless Firefox, then retry
 google_searches_per_10_minutes = 20   # shared by all agents; 0: no limit
-engine = "google"                     # or "brave": Brave answers every search
-# brave_api_key = "..."               # or the BRAVE_SEARCH_API_KEY environment variable
+engine = "google"                     # or a search API, to ask it first
+# fallbacks = ["tavily", "brave"]     # which search APIs to try, in order (default: all with a key)
+keyless = false                       # true: also ask Firecrawl without a key
+
+[keys]                                # or environment variables; see Search fallbacks
+brave = "..."
 ```
 
 Unknown keys are errors, so a typo can't silently fall back to a default. `web config` shows the
 effective settings.
 
-## Brave search fallback
+## Search fallbacks
 
 Google limits how many searches it takes from agents: on 2026-10-21 it blocked them after 25-38
-searches in 10 minutes, while the user's own browser kept working. With a Brave Search API key,
-searches Google refuses go to Brave instead, so agents keep going:
+searches in 10 minutes, while the user's own browser kept working. With keys for search APIs,
+searches Google refuses go to those instead, in this order, so agents keep going:
 
-1. Create a key at [api-dashboard.search.brave.com](https://api-dashboard.search.brave.com). It
-   costs $5 per 1,000 searches, and Brave adds $5 of free credit every month, so the first 1,000
-   searches a month are free. Brave asks for a card to prevent abuse; it charges only for credit
-   you choose to buy.
-2. Put the key in agent-web's config and make the file private:
+| Engine | Free tier (2026-10-21) | Rate limit | Results from | Key: `[keys]` name / environment variable | Sign up |
+|---|---|---|---|---|---|
+| Brave | $5 of credit a month (about 1,000 searches; card required) | 50 a second | Brave's index | `brave` / `BRAVE_SEARCH_API_KEY` | [api-dashboard.search.brave.com](https://api-dashboard.search.brave.com) |
+| SerpAPI | 250 searches a month | 50 an hour | Google | `serpapi` / `SERPAPI_API_KEY` | [serpapi.com](https://serpapi.com/users/sign_up) |
+| Tavily | 1,000 searches a month | 100 a minute | Tavily | `tavily` / `TAVILY_API_KEY` | [app.tavily.com](https://app.tavily.com) |
+| Exa | $10 of credit a month | 10 a second | Exa's index | `exa` / `EXA_API_KEY` | [dashboard.exa.ai](https://dashboard.exa.ai) |
+| Parallel | $5 of credit a month | 600 a minute | Parallel's index | `parallel` / `PARALLEL_API_KEY` | [platform.parallel.ai](https://platform.parallel.ai) |
+| Firecrawl | 500 searches a month; without a key, a daily cap per IP address (not published) | 10 a minute | not stated | `firecrawl` / `FIRECRAWL_API_KEY` | [firecrawl.dev](https://www.firecrawl.dev/app) |
+| LangSearch | free, with a daily allowance | 5 a second, plus tokens per minute and day | LangSearch | `langsearch` / `LANGSEARCH_API_KEY` | [langsearch.com](https://langsearch.com/dashboard) |
+| Serper | 2,500 searches once, at sign-up | 50 a second | Google | `serper` / `SERPER_API_KEY` | [serper.dev](https://serper.dev) |
 
-   ```bash
-   printf '\n[search]\nbrave_api_key = "YOUR-KEY"\n' >> ~/.config/agent-web/config.toml
-   chmod 600 ~/.config/agent-web/config.toml
-   ```
+Firecrawl also answers without a key, up to a daily cap per IP address that it doesn't
+publish. agent-web asks it keyless only if you turn that on (`keyless = true` under `[search]`) or
+list it in `search.fallbacks`, since it then sees your agents' overflow queries.
 
-   (If the file already has a `[search]` section, add the key line there instead.) Or set
-   `BRAVE_SEARCH_API_KEY` in the environment your agents start from; it takes precedence.
-3. `web doctor` shows whether the key is set and Brave's limits from its last answer.
+Put the keys you have in agent-web's config and make the file private:
 
-Brave answers when Google searches are paused, when Google answers with a captcha or a check the
-refresh doesn't get past, when the agents have used up the Google budget, and when Google can't be
-used at all (not signed in, cookies unreadable). Its results look the same, but the first line says
-`Brave results for: …` and a `Note:` says why; the next-page hint keeps `--engine brave` so the
-pages line up. `web search --engine google` (or `brave`) uses one engine only, and
-`search.engine = "brave"` sends every search to Brave and leaves your Google account alone. Brave
-supports the common operators (`site:`, quotes, `-word`, `OR`, `filetype:`).
+```toml
+[keys]
+brave = "..."
+tavily = "..."
+```
+
+```bash
+chmod 600 ~/.config/agent-web/config.toml
+```
+
+Or set the environment variables in the environment your agents start from; they take
+precedence. `web doctor` lists the engines with a key, how many searches each answered this month
+(counted by agent-web), and which have no key.
+
+How it behaves:
+- **Order:** the table's, or `search.fallbacks = ["tavily", "brave", …]`. `search.engine` picks
+  which engine is asked first (Google by default); setting it to a search API leaves your Google
+  account alone.
+- **Rate limits:** agent-web keeps each API under its documented limit (the table's), shared by
+  all agents like the Google budget. A search waits up to 3 seconds for a slot; past that, the
+  next API answers.
+- **When an API can't answer,** the next one is asked, and the API is skipped for a while instead
+  of being asked on every search: until the next UTC day when it's out of credit, an hour when it
+  rejects its key, a minute (or its `Retry-After`) when it limits requests or fails.
+  `--engine NAME` asks it anyway, e.g. to check it after topping up. Once an API's free tier is
+  used up, it refuses; it charges only if you bought credit or set up billing.
+- **The output** says which engine answered (`Tavily results for: …`) and a `Note:` says why
+  Google and any skipped APIs didn't. The next-page hint keeps `--engine NAME`, so a query's pages
+  come from one engine. `web search --engine NAME` asks one engine only.
+- **Operators:** SerpAPI and Serper (Google's results) and Brave take Google-style operators;
+  Firecrawl takes quotes, `-word`, `site:`, `filetype:` and `intitle:`; Tavily takes quoted
+  phrases (its `exact_match`); Exa, Parallel and LangSearch take none. For a query with operators,
+  the engines that understand all of them are tried first. The query is always sent as written;
+  when an engine that doesn't understand some of its operators answers, the `Note:` says which,
+  since its results may not match them. `site:` and `-site:` become domain filters for the APIs
+  that have them. Tavily, Exa and Firecrawl give 2 pages, Parallel 1.
+- **Quality** varies (one user's tests, 2026-10-21): Brave and Tavily came closest to Google;
+  Exa ranks pages by meaning rather than words and did poorly on a person's name; SerpAPI's copy
+  of Google's results missed Google's top hits, even with nothing but the query sent.
+- **What they see:** each API sees only the queries it answers, with your key. Pages are still
+  fetched from your machine.
 
 ## Output and exit codes
 

@@ -11,7 +11,7 @@ from typing import TextIO
 
 from agent_web import __version__
 from agent_web.config import (
-    BRAVE_KEY_ENV,
+    API_KEY_ENV,
     ENGINES,
     EXAMPLE_CONFIG,
     Config,
@@ -79,8 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument(
         "--engine",
         choices=ENGINES,
-        help="answer with this engine only. By default Google answers, and Brave answers when "
-        "Google can't (if a Brave Search API key is configured); the first line says which did",
+        help="answer with this engine only. By default Google answers, and the search APIs "
+        "with a key in agent-web's config answer, in turn, when it can't; the first line says "
+        "which did",
     )
     search.add_argument("--json", action="store_true", help="print JSON instead of text")
 
@@ -193,7 +194,6 @@ def _doctor(config: Config, out: TextIO) -> int:
     from agent_web.convert.pandoc import find_pandoc
     from agent_web.cookies import load_browser_cookies
     from agent_web.failures import CookieReadFailure, ToolMissing
-    from agent_web.search.brave import last_quota
     from agent_web.search.google import signed_in
     from agent_web.search.limiter import limiter_for
     from agent_web.search.refresh import recent_refreshes
@@ -235,7 +235,7 @@ def _doctor(config: Config, out: TextIO) -> int:
         )
     for line in recent_refreshes(config):
         print(f"google:   {_refresh_line(line, time.time())}", file=out)
-    problems += _doctor_brave(config, out, last_quota(config))
+    problems += _doctor_apis(config, out)
     domains = ", ".join(config.cookie_domains) or "(none: every fetch is anonymous)"
     print(f"cookies:  sent on fetch to: {domains}", file=out)
     print(f"cache:    {config.cache_dir}", file=out)
@@ -255,28 +255,52 @@ def _refresh_line(line: str, now: float) -> str:
     return f"past refresh, {ago} ago ({stamp[11:16]} UTC): {what}"
 
 
-def _doctor_brave(config: Config, out: TextIO, quota: str | None) -> int:
-    """Print the Brave lines; return 1 if something needs fixing."""
-    engine = config.search_engine
-    if config.brave_api_key is None:
-        if engine == "brave":
-            print("brave:    NO API KEY, but search.engine is brave: searches will fail", file=out)
-            return 1
-        print("brave:    no API key: searches stop while Google is paused", file=out)
-        return 0
+def _doctor_apis(config: Config, out: TextIO) -> int:
+    """A line per search API that agents can use, then the others; returns 1 if something needs
+    fixing."""
+    from agent_web.config import fallback_order, usable
+    from agent_web.search.apis import APIS
+    from agent_web.search.ledger import ledger_for
+
+    ledger = ledger_for(config)
+    first = config.search_engine
+    first_unusable = first != "google" and not usable(config, first)
+    if first_unusable:
+        print(f"search:   NO API KEY for {first}, the first engine (search.engine)", file=out)
+    order = [
+        *([first] if first != "google" and not first_unusable else []),
+        *fallback_order(config),
+    ]
+    in_file = False
+    for name in order:
+        api = APIS[name]
+        env = API_KEY_ENV[name]
+        from_env = bool(os.environ.get(env, "").strip())
+        if name not in config.api_keys:
+            source = "no key: asked keyless"
+        else:
+            in_file = in_file or not from_env
+            source = f"key from {env if from_env else 'the config file'}"
+        line = f"{name + ':':<9} {source}; "
+        line += f"{ledger.used(name)} searches this month; free tier: {api.free}; "
+        line += f"limit: {api.rate_text}"
+        if (skipped := ledger.skipped(name)) is not None:
+            when = time.strftime("%H:%M UTC", time.gmtime(skipped.until))
+            line += f"; skipped until {when}: {skipped.why}"
+        print(line, file=out)
+    unused = [name for name in config.api_keys if name not in order]
+    if unused:
+        print(f"search:   keys not used (not in search.fallbacks): {', '.join(unused)}", file=out)
+    missing = [name for name in API_KEY_ENV if name not in config.api_keys and name not in order]
+    if missing:
+        print(f"search:   no key for: {', '.join(missing)} (README: search fallbacks)", file=out)
     path = config_path()
-    from_env = bool(os.environ.get(BRAVE_KEY_ENV, "").strip())
-    where = BRAVE_KEY_ENV if from_env else str(path)
-    role = "answers every search" if engine == "brave" else "answers when Google can't"
-    print(f"brave:    API key set ({where}); {role}", file=out)
-    if quota:
-        print(f"brave:    {quota}", file=out)
-    if not from_env and path.exists() and path.stat().st_mode & 0o077:
+    if in_file and path.exists() and path.stat().st_mode & 0o077:
         print(
-            f"brave:    WARNING: {path} holds the key and others can read it: chmod 600", file=out
+            f"search:   WARNING: {path} holds API keys and others can read it: chmod 600", file=out
         )
         return 1
-    return 0
+    return 1 if first_unusable else 0
 
 
 def _config(args: argparse.Namespace, config: Config, out: TextIO) -> int:
@@ -285,7 +309,9 @@ def _config(args: argparse.Namespace, config: Config, out: TextIO) -> int:
         return EXIT_OK
     print(f"# {config_path()}", file=out)
     for key, value in config.__dict__.items():
-        shown = "(set, not shown)" if key == "brave_api_key" and value else repr(value)
+        shown = repr(value)
+        if key == "api_keys":  # names only: the keys are secrets
+            shown = repr(sorted(config.api_keys))
         print(f"{key} = {shown}", file=out)
     return EXIT_OK
 

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_web.config import EXAMPLE_CONFIG, Config, load_config, parse_config
+from agent_web.config import EXAMPLE_CONFIG, Config, fallback_order, load_config, parse_config
 from agent_web.failures import InvalidConfig
 
 
@@ -34,7 +35,10 @@ def test_full_config(tmp_path: Path) -> None:
         min_interval_seconds = 5
         google_searches_per_10_minutes = 12
         engine = "Brave"
-        brave_api_key = " KEY "
+        fallbacks = ["tavily", "Exa", "tavily"]
+        [keys]
+        brave = " KEY "
+        exa = "EXA"
         [fetch]
         cookie_domains = ["Reddit.com", ".news.example.org", "reddit.com"]
         timeout_seconds = 12.5
@@ -58,7 +62,9 @@ def test_full_config(tmp_path: Path) -> None:
     assert config.search_min_interval == 5
     assert config.google_budget == 12
     assert config.search_engine == "brave"
-    assert config.brave_api_key == "KEY"
+    assert config.fallbacks == ("tavily", "exa")
+    assert config.api_keys == {"brave": "KEY", "exa": "EXA"}
+    assert fallback_order(config) == ("exa",)  # only APIs with a key, never the first engine
     assert config.cookie_domains == ("news.example.org", "reddit.com")
     assert config.timeout == 12.5
     assert config.max_download_bytes == 3 * 1024 * 1024
@@ -86,9 +92,13 @@ def test_full_config(tmp_path: Path) -> None:
         ({"fetch": {"timeout_seconds": 0}}, "must be >= 1"),
         ({"fetch": {"allow_private_networks": "yes"}}, "true or false"),
         ({"output": {"max_chars": 10}}, "must be >= 500"),
-        ({"search": {"engine": "bing"}}, "search.engine must be one of: google, brave"),
+        ({"search": {"engine": "bing"}}, "search.engine must be one of: google, brave, serpapi"),
+        ({"search": {"fallbacks": "brave"}}, "search.fallbacks must be a list of names"),
+        ({"search": {"fallbacks": ["bing"]}}, "search.fallbacks: 'bing' isn't one of: brave,"),
+        ({"keys": {"bing": "x"}}, "unknown key keys.bing"),
         ({"search": {"google_searches_per_10_minutes": -1}}, "must be >= 0"),
-        ({"search": {"brave_api_key": ""}}, "non-empty string"),
+        ({"keys": {"brave": ""}}, "non-empty string"),
+        ({"search": {"brave_api_key": "x"}}, "unknown key search.brave_api_key"),
     ],
 )
 def test_invalid_config(data: dict[str, Any], message: str) -> None:
@@ -110,12 +120,14 @@ def test_environment_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("AGENT_WEB_ALLOW_PRIVATE_NETWORKS", "1")
     monkeypatch.setenv("AGENT_WEB_PANDOC", "/x/pandoc")
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "FROM-ENV")
+    monkeypatch.setenv("SERPER_API_KEY", " SERPER ")
     config = load_config(tmp_path / "missing.toml")
     assert isinstance(config, Config)
     assert config.cache_dir == tmp_path / "c"
     assert config.allow_private_networks
     assert config.pandoc == "/x/pandoc"
-    assert config.brave_api_key == "FROM-ENV"
+    assert config.api_keys == {"brave": "FROM-ENV", "serper": "SERPER"}
+    assert fallback_order(config) == ("brave", "serper")
 
 
 def test_config_path_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,3 +137,17 @@ def test_config_path_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     config = load_config()
     assert isinstance(config, Config)
     assert config.max_chars == 1234
+
+
+def test_keyless_apis_need_the_users_say_so() -> None:
+    from agent_web.config import usable
+
+    plain = Config()
+    assert not usable(plain, "firecrawl")
+    assert fallback_order(plain) == ()
+    assert fallback_order(replace(plain, keyless=True)) == ("firecrawl",)
+    assert fallback_order(replace(plain, fallbacks=("tavily", "firecrawl"))) == ("firecrawl",)
+    assert not usable(replace(plain, keyless=True), "tavily")  # only APIs that answer keyless
+    parsed = parse_config({"search": {"keyless": True}})
+    assert isinstance(parsed, Config)
+    assert parsed.keyless

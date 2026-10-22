@@ -1,5 +1,5 @@
-"""Web search backends: Google (search/google.py) and Brave (search/brave.py), which answers when
-Google can't or when configured to answer every search. search/dispatch.py picks between them."""
+"""Web search: Google (search/google.py), and search APIs (search/apis.py) that answer when Google
+can't or when configured to answer first. search/dispatch.py picks between them."""
 
 from __future__ import annotations
 
@@ -24,3 +24,4 @@ class SearchResults:
     page: int = 1
     engine: str = "Google"
     note: str = ""  # why another engine than the configured one answered
+    max_page: int = MAX_PAGE  # the last page `engine` can give

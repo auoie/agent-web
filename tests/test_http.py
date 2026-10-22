@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit
 
 import pytest
@@ -155,3 +156,29 @@ def test_cookie_read_failure_is_returned(server: Server) -> None:
         server.url("/html"), timeout=5, max_bytes=MB, allow_private=True, cookie_source=Broken()
     )
     assert result == CookieReadFailure("firefox", "database locked")
+
+
+def test_post_sends_the_body_and_isnt_redirected(server: Server) -> None:
+    from conftest import Route
+
+    def echo(handler: BaseHTTPRequestHandler) -> Route:
+        return Route(body=b"got it", headers={"Content-Type": "text/plain"})
+
+    server.routes["/api"] = echo
+    response = download(
+        server.url("/api"),
+        timeout=5,
+        max_bytes=1000,
+        allow_private=True,
+        post=b'{"q": "x"}',
+        extra_headers={"Content-Type": "application/json"},
+    )
+    assert isinstance(response, HttpResponse)
+    assert response.content == b"got it"
+    assert server.seen["/api"][0]["Content-Type"] == "application/json"
+    assert server.seen["/api"][0]["_body"] == '{"q": "x"}'
+    moved = download(
+        server.url("/redirect-same"), timeout=5, max_bytes=1000, allow_private=True, post=b"{}"
+    )
+    assert isinstance(moved, HttpResponse)
+    assert moved.status == 302  # not followed
