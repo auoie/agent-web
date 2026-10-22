@@ -11,11 +11,11 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
    Token savings that lose information (dropping link URLs, navigation or footers, article
    extraction) were declined.
 2. **No middlemen without a reason.** Nothing sits between the agent and the source unless it
-   earns its place. Today search goes straight to Google and pages are fetched directly from the
-   user's machine, so no proxy, API or hosted converter is involved. Services aren't ruled out:
-   an optional search API (Brave Search API, Firecrawl) could be added later, e.g. as a fallback
-   when Google's cookies don't work (see TODO.md). A hosted page fetcher or converter would
-   replace agent-web's own conversion, so it would have to match its fidelity (merged-cell tables,
+   earns its place. Search goes straight to Google and pages are fetched directly from the user's
+   machine, with no proxy or hosted converter. Search APIs earned a place as fallbacks: they answer
+   only the searches Google refuses, and only with the user's keys (or keyless use they turned
+   on), so agents keep searching (see Search). A hosted page fetcher or converter would replace
+   agent-web's own conversion, so it would have to match its fidelity (merged-cell tables,
    superscripts, labeled hidden text) to be worth it. The model provider sees what the agent reads,
    as with anything else.
 3. **Simple.** A command and a skill. Rules are added only when the generic path gives wrong
@@ -49,9 +49,9 @@ noted with their commit. Supporting research: [alternatives.md](alternatives.md)
 
 ## Search: Google with the user's browser cookies
 
-Chosen because it is direct and was the only free approach that worked from the user's IP. A
-paid search API (Brave) was added later as an optional fallback, for when Google refuses the
-agents' searches (see below).
+Chosen because it is direct and was the only free approach that worked from the user's IP.
+Search APIs (Brave first, then a chain of free tiers) were added later as optional fallbacks, for
+when Google refuses the agents' searches (see below).
 
 - Every keyless approach was blocked or captcha'd from the user's IP: ddgs (DuckDuckGo and
   others), DonSeTch's search, Google's no-JavaScript/Nokia lane (what SearXNG uses), plain Google.
@@ -131,7 +131,9 @@ agents' searches (see below).
   an API that couldn't answer: until the next UTC day when it's out of credit (HTTP 402/432/433 or
   a message about credit or quota), an hour when it rejected the key, a minute otherwise. Keys
   moved to a `[keys]` table, one environment variable each; the user's Brave key was moved there
-  (the old `search.brave_api_key` is an error now, not an alias). The adapters other than Brave
+  (the old `search.brave_api_key` is an error now, not an alias). Keys are blanked out of every
+  error message (SerpAPI's is in its URL, which "too large" and "too many redirects" errors quote
+  too) and, like cookies, never follow a redirect to another host. The adapters other than Brave
   were written from each API's documentation and test answers shaped like its examples; each
   is checked live (`just test-live`) once its key is added.
 - **Each search API is paced under its documented free-tier rate limit** (`Api.rate`, a rolling
@@ -142,7 +144,13 @@ agents' searches (see below).
   and the note says which was at its limit. HTTP 429 is read by its wording: "rate limit", "too
   many requests" and the like mean a short skip (its `Retry-After`, else a minute), while credit,
   quota, daily or monthly wording means out of credit. The first version matched "exceed", so
-  Brave's per-second "Request rate limit exceeded" would have skipped Brave until midnight.
+  Brave's per-second "Request rate limit exceeded" would have skipped Brave until midnight. A 429
+  whose `X-RateLimit-Limit`/`-Remaining` headers show a longer window (a plan's monthly cap) with
+  nothing left is out of credit at once, without retries. Brave answers HTTP 422 both for an
+  invalid key and for an invalid query (checked 2026-10-21: a 90-word query got "Unable to
+  validate request parameter(s)"), so a 422 counts as a rejected key only when its message is
+  about the key; at first every 422 did, and one long query would have skipped Brave for an
+  hour.
 - **Operator queries go first to the engines that understand them; queries are never rewritten**
   (`Api.operators`, `operators_used()`). From their docs: SerpAPI, Serper and Brave take
   Google-style operators; Firecrawl lists quotes, `-`, `site:`, `filetype:`, `inurl:`, `intitle:`

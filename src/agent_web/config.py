@@ -58,9 +58,10 @@ engine = "google"
 keyless = false
 
 [keys]
-# Search API keys (`web doctor` lists where to get them). Each has an environment variable that
-# takes precedence: BRAVE_SEARCH_API_KEY, SERPAPI_API_KEY, TAVILY_API_KEY, EXA_API_KEY,
-# PARALLEL_API_KEY, FIRECRAWL_API_KEY, LANGSEARCH_API_KEY, SERPER_API_KEY.
+# Search API keys (the README's "Search fallbacks" section says where to get them). Each has an
+# environment variable that takes precedence: BRAVE_SEARCH_API_KEY, SERPAPI_API_KEY,
+# TAVILY_API_KEY, EXA_API_KEY, PARALLEL_API_KEY, FIRECRAWL_API_KEY, LANGSEARCH_API_KEY,
+# SERPER_API_KEY.
 # If you put keys here, make this file private (chmod 600)
 # brave = "..."
 

@@ -9,7 +9,13 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from agent_web.config import API_KEY_ENV, Config
-from agent_web.failures import NetworkFailure, SearchApiError
+from agent_web.failures import (
+    NetworkFailure,
+    SearchApiError,
+    TooLarge,
+    TooManyRedirects,
+    describe,
+)
 from agent_web.http import DownloadFailure, HttpResponse
 from agent_web.search import SearchResult
 from agent_web.search.apis import (
@@ -94,15 +100,15 @@ def test_every_api_has_an_answer_shape_and_a_key_variable() -> None:
 @pytest.mark.parametrize("name", list(APIS))
 def test_first_page(config: Config, name: str) -> None:
     downloads = Downloads(answer(200, ANSWERS[name](results(10))))
-    found = search(APIS[name], "sqlite wal", 1, config, "KEY", downloader=downloads)
+    found = search(APIS[name], "sqlite wal", 1, config, "k-5ecret", downloader=downloads)
     assert isinstance(found, list)
     assert found[0].title == "T0"
     assert found[0].url == "https://site0.example/"
     assert found[0].snippet.startswith("s0")  # markup removed
     assert len(found) == 10
     [(url, kwargs)] = downloads.calls
-    sent = json.dumps(kwargs.get("extra_headers")) + url
-    assert "KEY" in sent  # the key goes in a header (or SerpAPI's URL)...
+    # The key goes in a header (or SerpAPI's URL)...
+    assert "k-5ecret" in json.dumps(kwargs.get("extra_headers")) + url
     assert "cookie_source" not in kwargs  # ...and no cookies go anywhere
 
 
@@ -218,12 +224,18 @@ def test_unexpected_answers(config: Config) -> None:
     assert search(APIS["brave"], "q", 1, config, "K", downloader=Downloads(answer(200, {}))) == []
 
 
-def test_network_failures_never_show_the_key(config: Config) -> None:
+def test_failures_never_show_the_key(config: Config) -> None:
     url = APIS["serpapi"].build("q", 1, "SECRET").url
-    offline = NetworkFailure(url, f"could not resolve {url}")
-    failed = search(APIS["serpapi"], "q", 1, config, "SECRET", downloader=Downloads(offline))
-    assert isinstance(failed, NetworkFailure)
-    assert "SECRET" not in failed.url + failed.reason
+    for failure in (
+        NetworkFailure(url, f"could not resolve {url}"),
+        TooLarge(url, 25 * 1024 * 1024),
+        TooManyRedirects(url, 10),
+    ):
+        failed = search(APIS["serpapi"], "q", 1, config, "SECRET", downloader=Downloads(failure))
+        assert type(failed) is type(failure)
+        assert not isinstance(failed, list)
+        assert "serpapi.com" in describe(failed)
+        assert "SECRET" not in describe(failed)
 
 
 def test_retry_after_is_followed_when_short_and_reported_when_long(config: Config) -> None:

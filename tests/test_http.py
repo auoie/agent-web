@@ -67,6 +67,20 @@ def test_redirect_never_carries_cookies_to_another_host(server: Server) -> None:
     assert first_hop.get("Cookie") == "session=s3cret"
 
 
+def test_redirect_never_carries_extra_headers_to_another_host(server: Server) -> None:
+    key = {"X-Subscription-Token": "s3cret"}
+    result = download(
+        server.url("/redirect-cross"),
+        timeout=5,
+        max_bytes=MB,
+        allow_private=True,
+        extra_headers=key,
+    )
+    assert isinstance(result, HttpResponse), result
+    assert server.seen["/redirect-cross"][0].get("X-Subscription-Token") == "s3cret"
+    assert "s3cret" not in str(server.seen["/echo-cookies"][0])
+
+
 def test_redirect_loop(server: Server) -> None:
     result = download(server.url("/loop"), timeout=5, max_bytes=MB, allow_private=True)
     assert isinstance(result, TooManyRedirects)

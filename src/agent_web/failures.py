@@ -8,6 +8,7 @@ a type error.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TypeAlias, assert_never
 
@@ -127,6 +128,12 @@ class NoEngineAnswered:
 # After a captcha or JavaScript check, every process stops searching for this long: retrying
 # during a block keeps it going.
 SEARCH_PAUSE_MINUTES = 10
+# Search API statuses for being out of credit (Tavily: 432 for its plan's limit, 433 for its
+# pay-as-you-go limit).
+OUT_OF_CREDIT_STATUSES = frozenset({402, 432, 433})
+# Brave answers 422 both for an invalid key and for an invalid query (a very long one), so a
+# 422 means a rejected key only when its message is about the key.
+_ABOUT_THE_KEY = re.compile(r"key|token|auth|subscription|credential", re.IGNORECASE)
 
 
 Failure: TypeAlias = (
@@ -176,9 +183,10 @@ def exit_code(failure: Failure) -> int:
         case NoApiKey():
             return EXIT_USAGE
         case SearchApiError(status=status):
-            if status in (401, 403, 422):
+            if key_rejected(failure):
                 return EXIT_USAGE
-            return EXIT_BLOCKED if status in (402, 429) else EXIT_NETWORK
+            blocked = status == 429 or status in OUT_OF_CREDIT_STATUSES
+            return EXIT_BLOCKED if blocked else EXIT_NETWORK
         case NoEngineAnswered(primary=primary):
             return EXIT_BLOCKED if primary is None else exit_code(primary)
         case _:
@@ -236,14 +244,11 @@ def describe(failure: Failure) -> str:
                 f"answered a search with {cause}; retrying sooner keeps the block going. Work with "
                 "the pages already found (web fetch still works), or wait"
             )
-        case SearchBudgetUsed(service, searches, seconds_left):
+        case SearchBudgetUsed():
+            # When no search API could be asked (NoEngineAnswered leaves this hint out).
             return (
-                f"the agents on this machine sent {searches} {service} searches in the last 10 "
-                "minutes, the most agent-web allows: more makes "
-                f"{service} block searches for everyone. The next one is possible in "
-                f"{_duration(seconds_left)}. Work with the pages already found (web fetch still "
-                "works), or wait. (With a search API key in agent-web's config, another engine "
-                "would answer instead.)"
+                f"{_budget_used(failure)}. With a search API key in agent-web's config, another "
+                "engine would answer instead"
             )
         case NoApiKey(name, env):
             return (
@@ -253,18 +258,37 @@ def describe(failure: Failure) -> str:
         case SearchApiError(service, status, detail):
             message = f"the {service} API answered HTTP {status}"
             message += f": {detail}" if detail else ""
-            if status in (401, 403, 422):
+            if key_rejected(failure):
                 message += f". Check the {service} API key in agent-web's config"
-            elif status in (402, 429):
+            elif status == 429 or status in OUT_OF_CREDIT_STATUSES:
                 message += " (too many requests at once, or the month's credit is used up)"
             return message
         case NoEngineAnswered(primary, tried):
             reasons = "; ".join(f"{name} {why}" for name, why in tried)
             if primary is None:
                 return f"no search engine could answer: {reasons}"
-            return f"{describe(primary)}. No search API could answer instead: {reasons}"
+            instead = f"No search API could answer instead: {reasons}"
+            if isinstance(primary, SearchBudgetUsed):  # without the hint to add an API key
+                return f"{_budget_used(primary)}. {instead}"
+            return f"{describe(primary)}. {instead}"
         case _:
             assert_never(failure)
+
+
+def key_rejected(failure: SearchApiError) -> bool:
+    """Whether a search API refused its key: HTTP 401 or 403, or a 422 that says so."""
+    status = failure.status
+    return status in (401, 403) or (status == 422 and bool(_ABOUT_THE_KEY.search(failure.detail)))
+
+
+def _budget_used(failure: SearchBudgetUsed) -> str:
+    service = failure.service
+    return (
+        f"the agents on this machine sent {failure.searches} {service} searches in the last 10 "
+        f"minutes, the most agent-web allows: more makes {service} block searches for everyone. "
+        f"The next one is possible in {_duration(failure.seconds_left)}. Work with the pages "
+        "already found (web fetch still works), or wait"
+    )
 
 
 def _duration(seconds: int) -> str:

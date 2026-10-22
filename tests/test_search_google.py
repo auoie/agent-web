@@ -491,7 +491,7 @@ def test_a_search_waits_for_a_budget_slot_that_frees_up_soon(config: Config) -> 
     assert isinstance(outcome, SearchResults)
     assert sleeps == [4.0, 3.0]
     assert len(seen) == 1
-    # Without time to wait (Brave can answer instead), it says so right away.
+    # Without time to wait (a search API can answer instead), it says so right away.
     limiter = QueueLimiter([OverBudget(20, 4.0)])
     outcome = search(
         "q",

@@ -61,12 +61,24 @@ FAILURES: list[tuple[Failure, int, str]] = [
     (SearchPaused("Google", "a captcha", 7), EXIT_BLOCKED, "paused for 7 more minute(s)"),
     (SearchBudgetUsed("Google", 20, 95), EXIT_BLOCKED, "next one is possible in 2 min"),
     (SearchBudgetUsed("Google", 20, 40), EXIT_BLOCKED, "next one is possible in 40 s"),
+    (SearchBudgetUsed("Google", 20, 40), EXIT_BLOCKED, "another engine would answer instead"),
     (
         NoApiKey("tavily", "TAVILY_API_KEY"),
         EXIT_USAGE,
         'TAVILY_API_KEY environment variable, or tavily = "..." under [keys]',
     ),
     (SearchApiError("Brave", 401, ""), EXIT_USAGE, "Check the Brave API key"),
+    (
+        SearchApiError("Brave", 422, "The provided subscription token is invalid."),
+        EXIT_USAGE,
+        "Check the Brave API key",
+    ),
+    (
+        SearchApiError("Brave", 422, "Unable to validate request parameter(s) (VALIDATION)"),
+        EXIT_NETWORK,
+        "HTTP 422: Unable to validate request parameter(s) (VALIDATION)",
+    ),
+    (SearchApiError("Tavily", 432, ""), EXIT_BLOCKED, "credit is used up"),
     (SearchApiError("Brave", 429, "slow down"), EXIT_BLOCKED, "HTTP 429: slow down"),
     (SearchApiError("Brave", 500, ""), EXIT_NETWORK, "answered HTTP 500"),
     (
@@ -86,6 +98,13 @@ FAILURES: list[tuple[Failure, int, str]] = [
 def test_failure_messages_and_codes(failure: Failure, code: int, fragment: str) -> None:
     assert exit_code(failure) == code
     assert fragment in describe(failure)
+
+
+def test_budget_message_after_the_search_apis_failed_drops_the_api_key_hint() -> None:
+    failure = NoEngineAnswered(SearchBudgetUsed("Google", 20, 40), (("Brave", "x"),))
+    message = describe(failure)
+    assert message.endswith("or wait. No search API could answer instead: Brave x")
+    assert "another engine would answer" not in message
 
 
 ISSUES: list[tuple[Issue, str]] = [

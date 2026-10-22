@@ -64,8 +64,6 @@ def test_fetch_exit_codes(server: Server) -> None:
     assert "# Hello" in out
     assert run_cli("fetch", server.url("/notfound"))[0] == 3
     assert run_cli("fetch", server.url("/captcha"))[0] == 4
-    code, _, err = run_cli("fetch", server.url("/slow"), "--refresh")
-    assert code == 0 or "failed" in err
 
 
 @requires_pandoc
@@ -227,6 +225,9 @@ def test_doctor_and_config_with_a_brave_key(
     assert "exa:" not in out.replace("for exa,", "")  # not also listed as usable
     assert "search:   keys not used (not in search.fallbacks): brave" in out
     assert "no key for: serpapi, exa, parallel, firecrawl, langsearch, serper" in out
+    path.chmod(0o644)  # an unused key in the file is still a secret
+    code, out, _ = run_cli("doctor")
+    assert "holds API keys and others can read it: chmod 600" in out
     code, out, _ = run_cli("config")
     assert "api_keys = ['brave', 'tavily']" in out
     assert "SECRET" not in out

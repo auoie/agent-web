@@ -16,10 +16,19 @@ import pytest
 from agent_web.config import API_KEY_ENV, Config
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# The user's real home, for the opt-in live tests; every other test gets a temporary one.
-REAL_HOME = Path.home()
-# Search API keys set in the user's environment, for the opt-in live tests.
-REAL_API_KEYS = {env: os.environ[env] for env in API_KEY_ENV.values() if os.environ.get(env)}
+# What isolated_env replaces or removes for every test.
+ISOLATED_ENV = (
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "AGENT_WEB_CONFIG",
+    "AGENT_WEB_CACHE_DIR",
+    "AGENT_WEB_ALLOW_PRIVATE_NETWORKS",
+    "AGENT_WEB_PANDOC",
+    *API_KEY_ENV.values(),
+)
+# The user's own values, which the opt-in live tests restore.
+REAL_ENV = {name: os.environ.get(name) for name in ISOLATED_ENV}
 
 requires_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc not installed")
 
@@ -28,17 +37,11 @@ requires_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pan
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """No test reads the user's config, cache or browser profiles (so none can start their
     browser or reach Google)."""
+    for name in ISOLATED_ENV:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    for name in (
-        "AGENT_WEB_CONFIG",
-        "AGENT_WEB_CACHE_DIR",
-        "AGENT_WEB_ALLOW_PRIVATE_NETWORKS",
-        "AGENT_WEB_PANDOC",
-        *API_KEY_ENV.values(),
-    ):
-        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

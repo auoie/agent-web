@@ -86,6 +86,7 @@ def test_run_browser_returns_the_cookies_googles_check_set(
     tmp_path: Path, fake_firefox: Path
 ) -> None:
     source = make_profile(tmp_path / "profile")
+    users_cookies = (source / "cookies.sqlite").read_bytes()
     work = tmp_path / "work"
     got = run_browser("https://www.google.com/search?q=x", "firefox", source, work)
     assert isinstance(got, list)
@@ -96,7 +97,8 @@ def test_run_browser_returns_the_cookies_googles_check_set(
     assert all(c.expires and c.expires < 10**11 for c in got)  # seconds, not milliseconds
     assert fake_firefox.read_text() == ".google.com"  # only Google's cookies were copied
     assert list(work.iterdir()) == []  # the throwaway profile is gone
-    assert (source / "cookies.sqlite").stat().st_size > 0  # the user's profile is untouched
+    # The user's own profile is untouched.
+    assert (source / "cookies.sqlite").read_bytes() == users_cookies
 
 
 def test_run_browser_failures(

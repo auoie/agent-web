@@ -46,6 +46,7 @@ class Engines:
         self.api_answers = apis
         self.google_waits: list[float] = []
         self.asked: list[str] = []
+        self.sleeps: list[float] = []
 
     def google(
         self, query: str, page: int, config: Config, *, budget_wait: float
@@ -56,15 +57,20 @@ class Engines:
     def api(
         self, api: Api, query: str, page: int, config: Config, key: str
     ) -> list[SearchResult] | Failure:
-        assert key in (f"{api.name}-key", "")  # "": a keyless API asked without a key
+        assert key == config.api_keys.get(api.name, "")  # "": a keyless API asked without one
         self.asked.append(api.name)
         return self.api_answers.get(api.name, [HIT])
 
     def run(
-        self, config: Config, ledger: Ledger, engine: str | None = None, page: int = 1
+        self,
+        config: Config,
+        ledger: Ledger,
+        engine: str | None = None,
+        page: int = 1,
+        query: str = "q",
     ) -> SearchResults | Failure:
         return search(
-            "q",
+            query,
             page,
             config,
             engine,
@@ -72,6 +78,7 @@ class Engines:
             api_search=self.api,
             ledger=ledger,
             now=lambda: NOW,
+            sleep=self.sleeps.append,
         )
 
 
@@ -232,11 +239,23 @@ def test_a_first_engine_other_than_google(config: Config, ledger: Ledger) -> Non
     assert engines.google_waits == []
 
 
+def test_a_first_engine_without_a_key_is_passed_over(config: Config, ledger: Ledger) -> None:
+    config = replace(keyed(config, "brave"), search_engine="tavily")
+    assert Engines(Captcha("Google"), {}).run(config, ledger) == SearchResults(
+        "q", (HIT,), 1, engine="Brave", note="Tavily has no API key, so Brave answered this search"
+    )
+
+
 def test_setback() -> None:
     assert setback(SearchApiError("Brave", 402, ""), NOW)[0] == "is out of credit"
     assert setback(SearchApiError("X", 429, "monthly quota exceeded"), NOW)[0] == "is out of credit"
     assert setback(SearchApiError("X", 429, "slow down"), NOW) == ("is limiting requests", NOW + 60)
     assert setback(SearchApiError("X", 403, ""), NOW) == ("rejected the API key", NOW + 3600)
+    # Brave answers 422 for an invalid key and for an invalid query alike.
+    invalid_key = SearchApiError("Brave", 422, "The provided subscription token is invalid.")
+    assert setback(invalid_key, NOW) == ("rejected the API key", NOW + 3600)
+    long_query = SearchApiError("Brave", 422, "Unable to validate request parameter(s)")
+    assert setback(long_query, NOW)[1] == NOW + 60
     assert setback(SearchApiError("X", 500, "oops"), NOW) == ("failed (HTTP 500: oops)", NOW + 60)
 
 
@@ -276,35 +295,26 @@ def test_429_wording_decides_between_out_of_credit_and_rate_limited() -> None:
 
 def test_each_api_is_paced_under_its_rate_limit(config: Config, ledger: Ledger) -> None:
     config = keyed(config, "firecrawl", "serper")  # Firecrawl: 10 searches a minute
-    sleeps: list[float] = []
     engines = Engines(Captcha("Google"), {})
     for _ in range(10):
-        outcome = search(
-            "q",
-            1,
-            config,
-            google_search=engines.google,
-            api_search=engines.api,
-            ledger=ledger,
-            now=lambda: NOW,
-            sleep=sleeps.append,
-        )
+        outcome = engines.run(config, ledger)
         assert isinstance(outcome, SearchResults)
         assert outcome.engine == "Firecrawl"
-    outcome = search(
-        "q",
-        1,
-        config,
-        google_search=engines.google,
-        api_search=engines.api,
-        ledger=ledger,
-        now=lambda: NOW,
-        sleep=sleeps.append,
-    )
+    outcome = engines.run(config, ledger)
     assert isinstance(outcome, SearchResults)
     assert outcome.engine == "Serper"
     assert "Firecrawl is at its limit of 10 a minute (next in 60 s)" in outcome.note
-    assert sleeps == []
+    assert engines.sleeps == []
+
+
+def test_a_short_wait_for_a_slot_is_waited_out(config: Config, ledger: Ledger) -> None:
+    for _ in range(10):  # Exa: 10 searches a second
+        ledger.claim("exa", 10, 1.0, 3.0)
+    engines = Engines(Captcha("Google"), {})
+    outcome = engines.run(keyed(config, "exa"), ledger)
+    assert isinstance(outcome, SearchResults)
+    assert outcome.engine == "Exa"
+    assert engines.sleeps == [1.0]
 
 
 def test_ledger_claims_slots_in_a_rolling_window(tmp_path: Path) -> None:
@@ -344,31 +354,20 @@ def test_operator_queries_go_to_engines_that_understand_them(
 ) -> None:
     config = replace(keyed(config, "tavily", "exa"), keyless=True)  # Firecrawl comes later
     engines = Engines(Captcha("Google"), {})
-    outcome = search(
-        '"new grad" -senior',
-        1,
-        config,
-        google_search=engines.google,
-        api_search=engines.api,
-        ledger=ledger,
-        now=lambda: NOW,
-    )
+    outcome = engines.run(config, ledger, query='"new grad" -senior')
     assert isinstance(outcome, SearchResults)
     assert outcome.engine == "Firecrawl"  # quotes and -word: Firecrawl reads both
     assert engines.asked == ["firecrawl"]
+    # search.engine is still asked first.
+    engines.asked.clear()
+    outcome = engines.run(replace(config, search_engine="exa"), ledger, query='"new grad" -senior')
+    assert isinstance(outcome, SearchResults)
+    assert engines.asked == ["exa"]
 
 
 def test_the_note_says_which_operators_an_engine_left_out(config: Config, ledger: Ledger) -> None:
     engines = Engines(Captcha("Google"), {})
-    outcome = search(
-        'rust "borrow checker" -beginner',
-        1,
-        keyed(config, "exa"),
-        google_search=engines.google,
-        api_search=engines.api,
-        ledger=ledger,
-        now=lambda: NOW,
-    )
+    outcome = engines.run(keyed(config, "exa"), ledger, query='rust "borrow checker" -beginner')
     assert isinstance(outcome, SearchResults)
     assert outcome.note.endswith(
         "so Exa answered this search. Exa doesn't support quoted phrases or -word exclusions, so "

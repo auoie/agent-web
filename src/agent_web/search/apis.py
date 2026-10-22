@@ -13,12 +13,12 @@ import json
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode
 
 from agent_web.config import Config
-from agent_web.failures import Failure, NetworkFailure, SearchApiError
+from agent_web.failures import Failure, SearchApiError
 from agent_web.http import DownloadFailure, HttpResponse, download
 from agent_web.invisible import reveal
 from agent_web.jsonvalue import as_dict, as_list, get_str
@@ -50,7 +50,6 @@ class Api:
     name: str  # in the config and --engine: "serpapi"
     title: str  # in the output: "SerpAPI"
     free: str  # its free tier, for `web doctor`
-    signup: str  # where to get a key
     build: Callable[[str, int, str], Request]  # query, page, key
     parse: Callable[[object], Found | None]  # None: not the expected answer
     # The Google-style operators it understands (OPERATORS): queries using others are sent to
@@ -248,7 +247,6 @@ APIS: dict[str, Api] = {
             "brave",
             "Brave",
             "$5 of credit a month (about 1,000 searches; a card is required)",
-            "https://api-dashboard.search.brave.com",
             _brave,
             lambda data: _fields(_items(data, "web", "results"), "title", "url", "description"),
             ALL_OPERATORS,
@@ -258,7 +256,6 @@ APIS: dict[str, Api] = {
             "serpapi",
             "SerpAPI",
             "250 Google searches a month",
-            "https://serpapi.com/users/sign_up",
             _serpapi,
             lambda data: _fields(_items(data, "organic_results"), "title", "link", "snippet"),
             ALL_OPERATORS,
@@ -268,7 +265,6 @@ APIS: dict[str, Api] = {
             "tavily",
             "Tavily",
             "1,000 searches a month",
-            "https://app.tavily.com",
             _tavily,
             lambda data: _fields(_items(data, "results"), "title", "url", "content"),
             frozenset({PHRASES}),
@@ -280,7 +276,6 @@ APIS: dict[str, Api] = {
             "exa",
             "Exa",
             "$10 of credit a month",
-            "https://dashboard.exa.ai",
             _exa,
             lambda data: _fields(_items(data, "results"), "title", "url", "highlights", "text"),
             frozenset(),
@@ -292,7 +287,6 @@ APIS: dict[str, Api] = {
             "parallel",
             "Parallel",
             "$5 of credit a month",
-            "https://platform.parallel.ai",
             _parallel,
             lambda data: _fields(_items(data, "results"), "title", "url", "excerpts"),
             frozenset(),
@@ -303,7 +297,6 @@ APIS: dict[str, Api] = {
             "firecrawl",
             "Firecrawl",
             "500 searches a month with a key; without one, a daily cap per IP address",
-            "https://www.firecrawl.dev/app",
             _firecrawl,
             lambda data: _fields(_items(data, "data", "web"), "title", "url", "description"),
             frozenset({PHRASES, EXCLUDE, FIELDS}),
@@ -315,7 +308,6 @@ APIS: dict[str, Api] = {
             "langsearch",
             "LangSearch",
             "free, with a daily allowance",
-            "https://langsearch.com/dashboard",
             _langsearch,
             _langsearch_results,
             frozenset(),
@@ -326,7 +318,6 @@ APIS: dict[str, Api] = {
             "serper",
             "Serper",
             "2,500 Google searches once, at sign-up",
-            "https://serper.dev",
             _serper,
             lambda data: _fields(_items(data, "organic"), "title", "link", "snippet"),
             ALL_OPERATORS,
@@ -410,10 +401,15 @@ def _retry_after(value: str) -> float:
 
 
 def _hide(failure: DownloadFailure, key: str) -> DownloadFailure:
-    """Network errors quote the URL, which holds the key for SerpAPI."""
-    if isinstance(failure, NetworkFailure) and key:
-        return NetworkFailure(failure.url.replace(key, "…"), failure.reason.replace(key, "…"))
-    return failure
+    """Failures quote the URL, which holds the key for SerpAPI."""
+    if not key:
+        return failure
+    hidden = {
+        f.name: value.replace(key, "…")
+        for f in fields(failure)
+        if isinstance(value := getattr(failure, f.name), str)
+    }
+    return replace(failure, **hidden)
 
 
 def search(

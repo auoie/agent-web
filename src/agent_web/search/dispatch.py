@@ -1,4 +1,4 @@
-"""Which engine answers a search: Google first, then the search APIs with a key, in order.
+"""Which engine answers a search: Google first, then the search APIs that can be asked, in order.
 
 A search Google refuses (paused, blocked, over the agents' budget, or not usable at all) goes to
 the search APIs (search/apis.py) in turn until one answers, and the results carry a note saying
@@ -17,6 +17,7 @@ from typing import assert_never
 
 from agent_web.config import API_KEY_ENV, KEYLESS_APIS, Config, fallback_order, usable
 from agent_web.failures import (
+    OUT_OF_CREDIT_STATUSES,
     SEARCH_PAUSE_MINUTES,
     Captcha,
     ConsentRequired,
@@ -30,6 +31,7 @@ from agent_web.failures import (
     SearchBudgetUsed,
     SearchPaused,
     describe,
+    key_rejected,
 )
 from agent_web.search import SearchResult, SearchResults, apis, google
 from agent_web.search.apis import APIS, OPERATORS, Api, operators_used
@@ -99,13 +101,13 @@ def setback(failure: Failure, now: float) -> tuple[str, float]:
     status, detail = failure.status, failure.detail
     if (
         failure.used_up
-        or status in (402, 432, 433)
+        or status in OUT_OF_CREDIT_STATUSES
         or (_OUT_OF_CREDIT.search(detail) and not _RATE_LIMITED.search(detail))
     ):
         tomorrow = datetime.fromtimestamp(now, UTC).date() + timedelta(days=1)
         midnight = datetime(tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC)
         return "is out of credit", midnight.timestamp()
-    if status in (401, 403, 422):
+    if key_rejected(failure):
         return "rejected the API key", now + KEY_REJECTED_SECONDS
     if status == 429:
         return "is limiting requests", now + (failure.retry_after or SHORT_SKIP_SECONDS)

@@ -150,7 +150,7 @@ What agent-web does do:
 - **No local network access.** `localhost`, private, link-local and carrier-grade NAT (Tailscale)
   addresses are refused, including as a redirect target. Every redirect hop is re-checked, the
   connection goes to the exact addresses that were checked (so DNS rebinding can't redirect it),
-  and cookies never follow a redirect to another host.
+  and neither cookies nor search API keys follow a redirect to another host.
 - **Terminal safety.** Control characters are removed, so a page can't send escape codes to your
   terminal when you run `web` yourself.
 - **pandoc runs with `--sandbox`**, so converting a hostile page can't read files.
@@ -405,7 +405,8 @@ Exit codes:
 - 1: usage, config or missing tool
 - 2: network error
 - 3: HTTP error status
-- 4: blocked (captcha, bot check, searches paused, Google budget used up, not signed in)
+- 4: blocked (captcha, bot check, searches paused, Google budget used up, not signed in, no
+  search engine could answer)
 
 ## Limitations
 
@@ -425,7 +426,7 @@ Exit codes:
 
 ```bash
 just check       # ruff format + lint, pyright (strict), pytest with coverage
-just test-live   # real Google search and pages, using your cookies
+just test-live   # real Google search (your cookies), pages, and the search APIs with a key
 just fix         # apply formatting and safe lint fixes
 ```
 
@@ -450,7 +451,9 @@ Layout:
   - `fetch.py`: the fetch pipeline.
   - `http.py`: downloads, redirects and cookie scoping.
   - `convert/`: HTML (pandoc + `clean.lua`) and PDF.
-  - `search/google.py`; `sites/`: Reddit threads and GitHub files.
+  - `search/`: Google (`google.py`, with `limiter.py` and `refresh.py`), the search APIs
+    (`apis.py`, `ledger.py`) and which engine answers (`dispatch.py`).
+  - `sites/`: Reddit threads and GitHub files.
   - `invisible.py`: tag characters and control codes.
   - `cache.py`, `output.py`.
 - `skills/web/SKILL.md`: the skill.
