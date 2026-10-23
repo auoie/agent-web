@@ -79,9 +79,13 @@ when Google refuses the agents' searches (see below).
   19:35:02, the refresh took 0.9 s, and the retry with its cookies at 19:35:07 got normal results.
   Refreshed cookies are kept for at most 10 minutes (long-lived ones it touched, like `SIDCC`,
   mustn't shadow newer ones from the user's browsing). At most one refresh a minute across
-  processes, under a lock; a search blocked sooner reuses that refresh's cookies, and a retry that
-  is still blocked, or that can't be sent because the budget is used up, pauses as before (on
-  2026-10-21 a refresh took the budget's last slot and Google wasn't paused). Each refresh is logged
+  processes, under a lock; a search blocked sooner reuses that refresh's cookies (unless it had
+  already sent them: a search starts with the stored refresh's cookies, so retrying would repeat
+  the blocked request), and a retry that is still blocked, or that can't be sent because the
+  budget is used up, pauses as before (on 2026-10-21 a refresh took the budget's last slot and
+  Google wasn't paused). An HTTP error page
+  from Google (a 5xx) is an error, not "No results.": it goes to the search APIs, and it isn't
+  read as the JavaScript check, which would pause searches. Each refresh is logged
   (`~/.cache/agent-web/google-refresh.log`, the last three in `web doctor`) to learn whether one
   refresh clears a block for a while or Google wants one per search. Off with
   `search.browser_refresh = false`. Chrome-family browsers aren't supported yet: they'd need their
@@ -126,7 +130,9 @@ when Google refuses the agents' searches (see below).
   first N pages and sliced), and where title, URL and snippet are in its JSON. Only answers
   without a model in between are used (Tavily's `include_answer` stays off). `site:`/`-site:`
   become domain filters where an API has them, since Exa's docs say it doesn't read `site:` in the
-  query. A shared ledger counts each API's searches per month for `web doctor` (Brave's own
+  query; Firecrawl gets them in the query, which it reads, because its filters can't include and
+  exclude at once and take hostnames only. Filters get a `site:` path's domain only. A shared
+  ledger counts each API's searches per month for `web doctor` (Brave's own
   headers report no monthly cap on its credit plan, so usage can't be read from them) and skips
   an API that couldn't answer: until the next UTC day when it's out of credit (HTTP 402/432/433 or
   a message about credit or quota), an hour when it rejected the key, a minute otherwise. Keys
@@ -150,7 +156,12 @@ when Google refuses the agents' searches (see below).
   invalid key and for an invalid query (checked 2026-10-21: a 90-word query got "Unable to
   validate request parameter(s)"), so a 422 counts as a rejected key only when its message is
   about the key; at first every 422 did, and one long query would have skipped Brave for an
-  hour.
+  hour. Next to a rejected key's status (401, 403) only "credit" or "quota" means out of credit:
+  a 403 "insufficient permissions" is about the key. A 429 whose message is about credit isn't
+  retried, and each retry claims a slot in the ledger like a first request, so retries count
+  toward the rate limit. An API's skip is checked and its slot claimed in one locked step, and
+  reading the ledger (`web doctor`, skips) doesn't rewrite it. LangSearch reports errors inside
+  an HTTP 200 answer; their own code counts, so a rejected key is recognized as one.
 - **Operator queries go first to the engines that understand them; queries are never rewritten**
   (`Api.operators`, `operators_used()`). From their docs: SerpAPI, Serper and Brave take
   Google-style operators; Firecrawl lists quotes, `-`, `site:`, `filetype:`, `inurl:`, `intitle:`
@@ -162,7 +173,11 @@ when Google refuses the agents' searches (see below).
   operators answers, the note says which, so the agent knows the results may not match them. Two
   translations stay, because they carry out an operator rather than change the query: `site:` and
   `-site:` become an API's domain filters, and quoted phrases turn on Tavily's `exact_match`.
-  The skill tells agents that other engines support fewer operators and that the note says so.
+  `site:` is an operator kind too: Parallel's documented request has no domain filter, so it reads
+  `site:` as text and the note says so, and a `site:` path is noted for the engines whose filters
+  take only a domain. Parentheses alone (`C (programming language)`) and an `OR` that only joins
+  `site:` terms don't count as OR/AND/NOT. The skill tells agents that other engines support fewer
+  operators and that the note says so.
 - **Result quality, as the user saw it on 2026-10-21:** Google best, Brave and Tavily fine, Exa
   weak on a person's name (it ranks by meaning, not words), SerpAPI poor. SerpAPI's "Google"
   results for `pandoc lua filter tables` missed Google's top hits (pandoc.org's Lua filters page)
@@ -194,10 +209,17 @@ when Google refuses the agents' searches (see below).
   unsubscribe). Cookies are re-checked on every redirect hop and never follow a redirect to another
   host. Sites that block anonymous requests (Reddit, Stack Overflow behind Cloudflare) work once
   listed; the output then suggests listing a blocked site, asking the user first (`40cac6a`).
+  A listed host gets what a browser would send it: its parent domain's cookies too (browser_cookie3
+  filters by substring, so they're loaded by the host's last two labels: an `old.reddit.com` entry
+  once missed the `.reddit.com` session), but a host-only cookie (no leading dot) only on its host.
 - **No local network access** unless `allow_private_networks` is set: loopback, private,
   link-local, carrier-grade NAT (Tailscale), reserved and multicast addresses are refused, on every
   redirect hop. Each connection is pinned to the addresses that passed the check (curl `RESOLVE`),
-  so DNS rebinding can't switch it to a local service (`aac4e9a`).
+  so DNS rebinding can't switch it to a local service (`aac4e9a`). International domain names are
+  turned into their ASCII form (the `idna` package, UTS 46 as browsers do) when a URL is checked:
+  curl matches the pin against the ASCII name it looks up, so a pin under the Unicode name was
+  ignored and curl looked the host up again, and Python's IDNA codec and curl's disagree on names
+  like `faß.de`. Search API keys go only to the first URL's origin, so not over plain http.
 - Limits: 25 MB (counted after decompression, so compression bombs are refused), 30 s timeout,
   10 redirects.
 
@@ -212,12 +234,22 @@ when Google refuses the agents' searches (see below).
   values never shift columns. Simple tables become pipe tables.
 - Strikethrough, superscripts and subscripts, figures and captions are kept. MathML becomes TeX;
   hidden MathML copies next to a formula image (Wikipedia) are dropped so formulas appear once.
-- **A single `<main>`: only it is converted** (pandoc's behavior), which drops menus and footers.
+- **A `<main>`: only it is converted** (pandoc's behavior), which drops menus and footers.
   Real text left outside it is counted and reported, and `--whole-page` converts everything.
+  With several (a hidden second one), pandoc keeps all of them and still drops the rest, so text
+  outside every `<main>` is counted; at first only a single `<main>` was, and the loss went
+  unreported. The `--offset` and `--find` hints after a `--whole-page` fetch keep the flag, since
+  their offsets point into that text.
 - **Hidden text is labeled, not removed**: `⟦hidden on page: …⟧` (inline `display:none` and
   similar, the `hidden` attribute, fragments of 12+ characters), `<noscript>` content, and
   invisible Unicode tag characters. Removing it would hide the fact that a page addresses agents
-  invisibly. Stylesheet-based hiding can't be seen without a browser.
+  invisibly. Stylesheet-based hiding can't be seen without a browser. Tag characters after a
+  black flag are left alone only in a subdivision flag's shape (3-6 tag digits and lowercase
+  letters, then the cancel tag, as in 🏴 England): at first any run ending in the cancel tag
+  passed, so a flag could carry hidden instructions unlabeled.
+- **Charsets:** a declared charset is used only if it's a text encoding (codecs.lookup also knows
+  base64 and zlib, which crashed the decode), and lone surrogates (UTF-7 can produce them) become
+  U+FFFD, since lxml stops at one and UTF-8 can't write one.
 - In-page links become `#fragment` and permalink anchors (`¶`, `#`, an icon or a zero-width
   space) are dropped (cheap, lossless).
 - `<time>` dates shown without a year get their machine-readable timestamp.
@@ -245,7 +277,9 @@ when Google refuses the agents' searches (see below).
 Only where the generic path gives wrong output:
 - **Reddit threads** use the `.json` endpoint: the post plus a numbered comment tree.
 - **GitHub file pages** (`/blob/`) are fetched from `raw.githubusercontent.com`, because the page
-  loses code indentation.
+  loses code indentation. It doesn't take the github.com session, so a private repository's file
+  is a 404 there; then the page is read instead (with github.com in `cookie_domains`), with a
+  note.
 
 Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hidden UI templates
 (harmless noise, not worth the code; see TODO.md).
@@ -307,14 +341,19 @@ Declined: a Stack Overflow rule (cookies work) and handling GitHub's repeated hi
 
 - One hour. Error, block and nearly empty pages aren't cached (a cached Reddit block page once
   kept being served after cookies were added, `47ab58e`).
-- The key includes whether (and from which browser) cookies are sent and `--whole-page`, so
-  changing those settings never serves an old result.
+- The key includes the browser and the whole `cookie_domains` list (not only whether the URL is
+  on it: a redd.it thread is read from www.reddit.com, and a redirect can land on a listed site)
+  and `--whole-page`, so changing those settings never serves an old result.
 - `FORMAT_VERSION` in `cache.py` is bumped whenever conversion output changes.
 - Saved files (`text/`, `files/`) share the 200 MB limit and are removed oldest first, not after
   an hour, so paths printed earlier usually stay valid. A cache entry whose files are gone is a
   miss, since its output would point to them. A result that isn't cached (an error or block page
   after `--refresh`) still overwrites the files, so it also removes the page's older entry;
-  otherwise that entry would be served with the error page's files.
+  otherwise that entry would be served with the error page's files. The cache is pruned once per
+  fetch, never removing the files that fetch just saved (a small `cache.max_mb` once deleted them
+  before their paths were printed).
+- Fetches and searches need the cache folder (saved files, the shared limiter and ledger). If it
+  can't be written (a sandbox, a full disk), they say so (exit 1) instead of a traceback.
 
 ## Code conventions
 

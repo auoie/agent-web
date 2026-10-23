@@ -358,11 +358,16 @@ def test_hidden_text_outside_main_is_not_counted(pandoc: Pandoc) -> None:
     assert convert_html(inside, "text/html", BASE, pandoc).hidden_count == 1
 
 
-def test_no_outside_count_without_exactly_one_main(pandoc: Pandoc) -> None:
+def test_text_outside_every_main_is_counted(pandoc: Pandoc) -> None:
     none = convert_html(b"<p>a</p><p>b</p>", "text/html", BASE, pandoc)
-    two = convert_html(b"<main>a</main><main>b</main><p>c</p>", "text/html", BASE, pandoc)
     assert none.outside_main_chars == 0
-    assert two.outside_main_chars == 0
+    # pandoc keeps each <main> (here a hidden second one) and drops the appendix outside them.
+    appendix = "Appendix " * 30
+    html = f"<main><p>a</p></main><main hidden><p>{'b' * 20}</p></main><p>{appendix}</p>"
+    two = convert_html(html.encode(), "text/html", BASE, pandoc)
+    assert "Appendix" not in two.markdown
+    assert two.outside_main_chars == len("".join(appendix.split()))
+    assert two.hidden_count == 1  # the hidden <main> is labeled and kept
 
 
 def test_minified_page_without_head_or_body_tags(pandoc: Pandoc) -> None:
@@ -503,3 +508,13 @@ def test_prepare_drops_base_tag_after_resolving_it() -> None:
     )
     assert "https://cdn.example.org/assets/x.html" in prepared.html
     assert "<base" not in prepared.html
+
+
+def test_charsets_that_arent_text_encodings_are_ignored(pandoc: Pandoc) -> None:
+    for charset in ("base64", "undefined", "rot13"):
+        page = convert_html(b"<p>plain words</p>", f"text/html; charset={charset}", BASE, pandoc)
+        assert page.markdown == "plain words"
+
+
+def test_lone_surrogates_from_utf7_are_replaced() -> None:
+    assert decode_html(b"hi +2AA- there", "text/plain; charset=utf-7") == "hi � there"

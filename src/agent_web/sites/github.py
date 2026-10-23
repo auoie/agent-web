@@ -9,13 +9,21 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
+from agent_web.urls import hostname
+
 _BLOB_PATH = re.compile(r"^/([^/]+)/([^/]+)/blob/(.+)$")
+# The note when the raw file wasn't found and the github.com page was read instead.
+PAGE_FALLBACK = (
+    "raw.githubusercontent.com answered 404 (a private repository's files need the github.com "
+    "session, which it doesn't take), so this is the github.com page, where code can lose its "
+    "indentation"
+)
 
 
 def raw_url(url: str) -> str | None:
     """The raw file URL for a GitHub file page, else None."""
     parts = urlsplit(url)
-    if (parts.hostname or "").lower() not in ("github.com", "www.github.com"):
+    if hostname(url) not in ("github.com", "www.github.com"):
         return None
     match = _BLOB_PATH.match(parts.path)
     if not match:

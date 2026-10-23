@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 
 from agent_web.config import Config
-from agent_web.failures import InvalidUrl, PrivateAddress, ToolMissing
-from agent_web.fetch import fetch, reveal_invisible
+from agent_web.failures import CacheUnwritable, InvalidUrl, PrivateAddress, ToolMissing
+from agent_web.fetch import cache_variant, fetch, reveal_invisible
 from agent_web.model import (
     BinaryFile,
     BotCheck,
+    ConversionFallback,
     CookiesMightHelp,
     FetchResult,
     HiddenText,
@@ -23,6 +24,7 @@ from agent_web.model import (
     PlainText,
     RedditThread,
 )
+from agent_web.sites import github
 from conftest import FIXTURES, HTML_PAGE, Route, Server, requires_pandoc
 
 pytestmark = requires_pandoc
@@ -259,3 +261,30 @@ def test_invisible_characters_are_revealed_in_every_text_field() -> None:
     assert issues == (HttpErrorStatus(404), HiddenText(4))
     plain = PlainText(meta, text="clean")
     assert reveal_invisible(plain, []) == (plain, ())
+
+
+def test_a_private_github_file_falls_back_to_the_page(
+    server: Server, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def raw_url(url: str) -> str:
+        return server.url("/notfound")
+
+    monkeypatch.setattr("agent_web.sites.github.raw_url", raw_url)
+    result = ok(server.url("/html"), config)
+    assert "Hello" in html(result).markdown
+    assert ConversionFallback(github.PAGE_FALLBACK) in result.issues
+
+
+def test_the_cache_variant_covers_the_whole_cookie_list(config: Config) -> None:
+    """redd.it threads are read from www.reddit.com, with its cookies if it's listed."""
+    assert cache_variant("https://redd.it/abc", config) == "anonymous"
+    listed = replace(config, cookie_domains=("reddit.com",))
+    assert cache_variant("https://redd.it/abc", listed) == "cookies:firefox:reddit.com"
+
+
+def test_a_cache_that_cant_be_written_is_a_failure(server: Server, config: Config) -> None:
+    config.cache_dir.mkdir(parents=True)
+    (config.cache_dir / "files").write_text("not a folder")
+    result = fetch(server.url("/html"), config)
+    assert isinstance(result, CacheUnwritable)
+    assert result.directory == str(config.cache_dir)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from agent_web.failures import (
     NotSignedIn,
     SearchApiError,
     SearchBudgetUsed,
+    SearchHttpError,
     SearchPaused,
     describe,
     exit_code,
@@ -29,7 +31,7 @@ from agent_web.failures import (
 from agent_web.search import SearchResult, SearchResults
 from agent_web.search.apis import Api
 from agent_web.search.dispatch import search, setback
-from agent_web.search.ledger import Ledger
+from agent_web.search.ledger import AtLimit, Ledger, Skipped
 
 HIT = SearchResult("T", "https://a.example/", "s")
 NOW = datetime(2026, 10, 21, 22, 30, tzinfo=UTC).timestamp()
@@ -55,10 +57,18 @@ class Engines:
         return self.google_answer
 
     def api(
-        self, api: Api, query: str, page: int, config: Config, key: str
+        self,
+        api: Api,
+        query: str,
+        page: int,
+        config: Config,
+        key: str,
+        *,
+        pace: Callable[[], float | None],
     ) -> list[SearchResult] | Failure:
         assert key == config.api_keys.get(api.name, "")  # "": a keyless API asked without one
         self.asked.append(api.name)
+        self.pace = pace
         return self.api_answers.get(api.name, [HIT])
 
     def run(
@@ -320,13 +330,25 @@ def test_a_short_wait_for_a_slot_is_waited_out(config: Config, ledger: Ledger) -
 def test_ledger_claims_slots_in_a_rolling_window(tmp_path: Path) -> None:
     clock = [NOW]
     ledger = Ledger(tmp_path / "l.json", now=lambda: clock[0])
-    assert ledger.claim("exa", 2, 1.0, 3.0) == (True, 0.0)
-    assert ledger.claim("exa", 2, 1.0, 3.0) == (True, 0.0)
-    assert ledger.claim("exa", 2, 1.0, 3.0) == (True, 1.0)  # reserved: send in 1 s
-    assert ledger.claim("exa", 2, 1.0, 0.5) == (False, 1.0)  # the next slot is too far off
+    assert ledger.claim("exa", 2, 1.0, 3.0) == 0.0
+    assert ledger.claim("exa", 2, 1.0, 3.0) == 0.0
+    assert ledger.claim("exa", 2, 1.0, 3.0) == 1.0  # reserved: send in 1 s
+    assert ledger.claim("exa", 2, 1.0, 0.5) == AtLimit(1.0)  # the next slot is too far off
     clock[0] += 1.5  # only the reserved request (sent at +1 s) is still in the window
-    assert ledger.claim("exa", 2, 1.0, 3.0) == (True, 0.0)
-    assert ledger.claim("exa", 2, 1.0, 3.0) == (True, 0.5)  # the +1 s one leaves at +2 s
+    assert ledger.claim("exa", 2, 1.0, 3.0) == 0.0
+    assert ledger.claim("exa", 2, 1.0, 3.0) == 0.5  # the +1 s one leaves at +2 s
+
+
+def test_ledger_claims_check_the_skip_in_the_same_step(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "l.json", now=lambda: NOW)
+    ledger.skip("exa", NOW + 60, "is limiting requests")
+    assert ledger.claim("exa", 2, 1.0, 3.0) == Skipped(NOW + 60, "is limiting requests")
+    assert ledger.claim("exa", 2, 1.0, 3.0, honor_skip=False) == 0.0  # --engine exa
+    assert ledger.skips() == {"exa": Skipped(NOW + 60, "is limiting requests")}
+    before = (tmp_path / "l.json").read_text()
+    assert ledger.used("exa") == 0
+    assert ledger.skipped("exa") is not None
+    assert (tmp_path / "l.json").read_text() == before  # reading doesn't rewrite the file
 
 
 def test_keyless_firecrawl_only_when_allowed(config: Config, ledger: Ledger) -> None:
@@ -373,3 +395,49 @@ def test_the_note_says_which_operators_an_engine_left_out(config: Config, ledger
         "so Exa answered this search. Exa doesn't support quoted phrases or -word exclusions, so "
         "results may not match them"
     )
+
+
+def test_google_waits_for_a_slot_when_no_api_could_answer(config: Config, ledger: Ledger) -> None:
+    ledger.skip("brave", NOW + 3600, "is out of credit")
+    engines = Engines(SearchBudgetUsed("Google", 20, 40), {})
+    engines.run(keyed(config, "brave"), ledger)
+    assert engines.google_waits == [30.0]
+    engines.google_waits.clear()
+    engines.run(keyed(config, "parallel"), ledger, page=2)  # Parallel gives only one page
+    assert engines.google_waits == [30.0]
+
+
+def test_an_error_status_from_google_goes_to_the_apis(config: Config, ledger: Ledger) -> None:
+    engines = Engines(SearchHttpError("Google", 503), {})
+    outcome = engines.run(keyed(config, "brave"), ledger)
+    assert isinstance(outcome, SearchResults)
+    assert outcome.note == "Google answered HTTP 503, so Brave answered this search"
+
+
+def test_a_rejected_key_isnt_mistaken_for_credit() -> None:
+    forbidden = SearchApiError("Exa", 403, "insufficient permissions for this key")
+    assert setback(forbidden, NOW) == ("rejected the API key", NOW + 3600)
+    quota = SearchApiError("Exa", 403, "monthly quota exceeded")
+    assert setback(quota, NOW)[0] == "is out of credit"
+
+
+def test_no_key_hint_when_the_config_has_keys(config: Config, ledger: Ledger) -> None:
+    engines = Engines(SearchBudgetUsed("Google", 20, 40), {})
+    outcome = engines.run(keyed(config, "brave"), ledger, "google")
+    assert outcome == SearchBudgetUsed("Google", 20, 40, api_hint=False)
+    assert engines.run(config, ledger, "google") == SearchBudgetUsed("Google", 20, 40)
+
+
+def test_site_queries_note_an_engine_without_domain_filters(config: Config, ledger: Ledger) -> None:
+    engines = Engines(Captcha("Google"), {})
+    outcome = engines.run(keyed(config, "parallel"), ledger, query="rust site:docs.rs")
+    assert isinstance(outcome, SearchResults)
+    assert outcome.note.endswith("Parallel doesn't support site:, so results may not match them")
+
+
+def test_retries_are_paced_by_the_ledger(config: Config, ledger: Ledger) -> None:
+    engines = Engines(Captcha("Google"), {})
+    engines.run(keyed(config, "exa"), ledger)
+    for _ in range(9):  # the search itself took one of Exa's 10 a second
+        assert engines.pace() == 0.0
+    assert engines.pace() == 1.0  # the next slot, reserved

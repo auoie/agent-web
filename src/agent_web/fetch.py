@@ -14,8 +14,8 @@ from agent_web.convert.html import convert_html, decode_html
 from agent_web.convert.pandoc import Pandoc, find_pandoc
 from agent_web.convert.pdf import PdfUnreadable, convert_pdf
 from agent_web.cookies import AllowlistCookieSource, CookieSource, impersonation_for
-from agent_web.failures import Failure, InvalidUrl, ToolMissing
-from agent_web.http import HttpResponse, download
+from agent_web.failures import CacheUnwritable, Failure, InvalidUrl, ToolMissing
+from agent_web.http import DownloadFailure, HttpResponse, download
 from agent_web.invisible import reveal
 from agent_web.model import (
     BinaryFile,
@@ -97,12 +97,13 @@ def _meta(url: str, response: HttpResponse, now: float) -> Meta:
 def _convert(
     url: str,
     response: HttpResponse,
+    kind: Kind,
     pandoc: Callable[[], Pandoc | ToolMissing],
     now: float,
     whole_page: bool = False,
 ) -> tuple[Content, list[Issue]] | ToolMissing:
     meta = _meta(url, response, now)
-    match classify(response):
+    match kind:
         case "pdf":
             converted = convert_pdf(response.content)
             if isinstance(converted, PdfUnreadable):
@@ -191,28 +192,38 @@ def fetch(
         config.browser, config.cookie_domains, config.cookie_file
     )
     find = pandoc or (lambda: find_pandoc(config.pandoc))
-    issues: list[Issue] = []
+
+    def get(target: str) -> HttpResponse | DownloadFailure:
+        return download(
+            target,
+            timeout=config.timeout,
+            max_bytes=config.max_download_bytes,
+            allow_private=config.allow_private_networks,
+            cookie_source=source,
+            impersonate_with_cookies=impersonation_for(config.browser),
+        )
 
     if (post_id := reddit.thread_id(valid)) is not None:
         found = _try_reddit(valid, post_id, config, source, now())
         if found is not None:
             thread, original = found
             result = FetchResult(*reveal_invisible(thread, []))
-            result = _save(cache, valid, variant, result, original, ".json")
-            cache.store(valid, result, variant)
-            return result
+            return _keep(cache, valid, variant, result, original, ".json")
 
-    response = download(
-        github.raw_url(valid) or valid,
-        timeout=config.timeout,
-        max_bytes=config.max_download_bytes,
-        allow_private=config.allow_private_networks,
-        cookie_source=source,
-        impersonate_with_cookies=impersonation_for(config.browser),
-    )
+    issues: list[Issue] = []
+    raw = github.raw_url(valid)
+    response = get(raw or valid)
+    if raw and isinstance(response, HttpResponse) and response.status == 404:
+        # raw.githubusercontent.com doesn't take the github.com session, so a private
+        # repository's file is a 404 there; the page itself may still have it.
+        page = get(valid)
+        if isinstance(page, HttpResponse) and page.status < 400:
+            response = page
+            issues.append(ConversionFallback(github.PAGE_FALLBACK))
     if not isinstance(response, HttpResponse):
         return response
-    converted = _convert(valid, response, find, now(), whole_page)
+    kind = classify(response)
+    converted = _convert(valid, response, kind, find, now(), whole_page)
     if isinstance(converted, ToolMissing):
         return converted
     content, found_issues = reveal_invisible(*converted)
@@ -224,22 +235,29 @@ def fetch(
         issues.append(CookiesMightHelp(host.removeprefix("www.")))
 
     result = FetchResult(content, tuple(issues))
-    suffix = _original_suffix(classify(response), response.content_type)
-    result = _save(cache, valid, variant, result, response.content, suffix)
-    if cacheable(result):
-        cache.store(valid, result, variant)
-    else:
-        # The saved files now hold this page, so an older entry must not be served with them.
-        cache.forget(valid, variant)
-    return result
+    suffix = _original_suffix(kind, response.content_type)
+    return _keep(cache, valid, variant, result, response.content, suffix)
 
 
-def _save(
+def _keep(
     cache: PageCache, url: str, variant: str, result: FetchResult, original: bytes, suffix: str
-) -> FetchResult:
-    """Write the fetch to disk (see SavedFiles), whether or not the result is cached."""
+) -> FetchResult | CacheUnwritable:
+    """Write the fetch to disk (see SavedFiles), and cache it if it's worth keeping."""
     text = None if isinstance(result.content, BinaryFile) else saved_text(result.content)
-    return replace(result, files=cache.save_files(url, variant, original, suffix, text))
+    try:
+        result = replace(result, files=cache.save_files(url, variant, original, suffix, text))
+        if cacheable(result):
+            entry = cache.store(url, result, variant)
+        else:
+            # The saved files now hold this page, so an older entry must not be served with them.
+            cache.forget(url, variant)
+            entry = None
+    except OSError as e:
+        return CacheUnwritable(str(cache.directory), e.strerror or type(e).__name__)
+    files = result.files
+    saved = [files.original, files.text] if files else []
+    cache.prune(keep=[path for path in (entry, *saved) if path])
+    return result
 
 
 def reveal_invisible(content: Content, issues: list[Issue]) -> tuple[Content, tuple[Issue, ...]]:
@@ -271,12 +289,13 @@ def reveal_invisible(content: Content, issues: list[Issue]) -> tuple[Content, tu
 
 
 def cache_variant(url: str, config: Config) -> str:
-    """What besides the URL decides the result: whether (and from which browser) cookies are sent.
-    Changing `fetch.cookie_domains` or `cookies.browser` therefore never serves an old result."""
-    host = hostname(url)
-    if any(domain_matches(host, domain) for domain in config.cookie_domains):
-        return f"cookies:{config.browser}"
-    return "anonymous"
+    """What besides the URL decides the result: which cookies can be sent. Changing
+    `fetch.cookie_domains` or `cookies.browser` therefore never serves an old result. The whole
+    list counts, not only whether `url` is on it: the request can end up on a listed site anyway
+    (redd.it threads are read from www.reddit.com, and redirects)."""
+    if not config.cookie_domains:
+        return "anonymous"
+    return f"cookies:{config.browser}:{','.join(config.cookie_domains)}"
 
 
 def cacheable(result: FetchResult) -> bool:

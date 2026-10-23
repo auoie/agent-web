@@ -26,7 +26,8 @@ class PdfUnreadable:
 
 @contextlib.contextmanager
 def _quiet_stdout() -> Generator[None]:
-    """MuPDF writes parser messages straight to file descriptor 1; keep them out of our output."""
+    """MuPDF writes parser messages straight to file descriptor 1, and pymupdf4llm prints
+    warnings; keep both out of our output."""
     sys.stdout.flush()
     saved = os.dup(1)
     try:
@@ -34,6 +35,9 @@ def _quiet_stdout() -> Generator[None]:
             os.dup2(devnull.fileno(), 1)
             yield
     finally:
+        # Printed text still in Python's buffer (a pipe's is flushed only when full) goes to
+        # /dev/null too, not to the real stdout after it's restored.
+        sys.stdout.flush()
         os.dup2(saved, 1)
         os.close(saved)
 

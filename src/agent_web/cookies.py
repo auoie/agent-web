@@ -10,7 +10,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 from agent_web.failures import CookieReadFailure
-from agent_web.urls import domain_matches
+from agent_web.urls import domain_matches, hostname
 
 # curl_cffi impersonation target matching the browser whose cookies we send, so the TLS
 # fingerprint and cookies tell the same story.
@@ -88,12 +88,14 @@ def cookies_for_url(
     cookies: Iterable[Cookie], url: str, now: float | None = None
 ) -> dict[str, str]:
     """Cookies a browser would send to `url`: domain, path, secure flag and expiry are honored.
+    A host-only cookie (its domain has no leading dot, as browsers store them) goes only to that
+    exact host, not to its subdomains.
 
     When several cookies share a name, the most specific (longest path, then longest domain) wins.
     """
     now = time.time() if now is None else now
     parts = urlsplit(url)
-    host = (parts.hostname or "").lower()
+    host = hostname(url)
     path = parts.path or "/"
     secure = parts.scheme.lower() == "https"
     chosen: dict[str, tuple[int, int, str]] = {}
@@ -101,7 +103,8 @@ def cookies_for_url(
         if cookie.value is None:
             continue
         domain = cookie.domain.lstrip(".").lower()
-        if not domain_matches(host, domain):
+        host_only = not cookie.domain.startswith(".")
+        if not (host == domain if host_only else domain_matches(host, domain)):
             continue
         if cookie.secure and not secure:
             continue
@@ -133,16 +136,19 @@ class AllowlistCookieSource:
         self._cache: dict[str, list[Cookie]] = {}
 
     def allowed_domain(self, url: str) -> str | None:
-        host = (urlsplit(url).hostname or "").lower()
+        host = hostname(url)
         return next((d for d in self.domains if domain_matches(host, d)), None)
 
     def for_url(self, url: str) -> dict[str, str] | CookieReadFailure:
-        domain = self.allowed_domain(url)
-        if domain is None:
+        if self.allowed_domain(url) is None:
             return {}
-        if domain not in self._cache:
-            loaded = self._loader(self.browser, domain, self.cookie_file)
+        # The loader keeps cookies whose domain contains this text. The host's last two labels
+        # are in every domain whose cookies a browser sends it (old.reddit.com gets .reddit.com
+        # cookies too), even when only a subdomain is allowlisted.
+        key = ".".join(hostname(url).split(".")[-2:])
+        if key not in self._cache:
+            loaded = self._loader(self.browser, key, self.cookie_file)
             if isinstance(loaded, CookieReadFailure):
                 return loaded
-            self._cache[domain] = loaded
-        return cookies_for_url(self._cache[domain], url)
+            self._cache[key] = loaded
+        return cookies_for_url(self._cache[key], url)

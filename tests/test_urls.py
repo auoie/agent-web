@@ -5,7 +5,7 @@ import socket
 import pytest
 
 from agent_web.failures import InvalidUrl, NetworkFailure, PrivateAddress
-from agent_web.urls import domain_matches, normalize, public_addresses, validate_url
+from agent_web.urls import domain_matches, normalize, origin, public_addresses, validate_url
 
 
 @pytest.mark.parametrize(
@@ -13,12 +13,22 @@ from agent_web.urls import domain_matches, normalize, public_addresses, validate
     [
         "https://example.com",
         "http://example.com/a?b=c#d",
-        "https://例え.jp/パス",
+        "https://example.com/パス",
         "  https://x.io  ",
     ],
 )
 def test_validate_url_accepts_http_urls(url: str) -> None:
     assert validate_url(url) == url.strip()
+
+
+def test_international_host_names_become_ascii() -> None:
+    """The address check, the pinned connection and curl must all look up the same name."""
+    assert validate_url("https://例え.jp/パス") == "https://xn--r8jz45g.jp/パス"
+    assert validate_url("http://Bücher.de:8080/x") == "http://xn--bcher-kva.de:8080/x"
+    assert validate_url("https://faß.de/") == "https://xn--fa-hia.de/"  # as browsers do (UTS 46)
+    invalid = validate_url("https://a‍b.de/")  # a zero-width joiner where it isn't allowed
+    assert isinstance(invalid, InvalidUrl)
+    assert "international domain name" in invalid.reason
 
 
 @pytest.mark.parametrize(
@@ -116,3 +126,9 @@ def test_unresolvable_host_is_a_network_failure(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(socket, "getaddrinfo", fail)
     assert isinstance(public_addresses("http://nowhere.example/"), NetworkFailure)
+
+
+def test_origin_fills_in_the_default_port() -> None:
+    assert origin("https://Api.Example/x") == ("https", "api.example", 443)
+    assert origin("http://api.example/x") == ("http", "api.example", 80)  # not https's origin
+    assert origin("https://api.example:8443/") == ("https", "api.example", 8443)

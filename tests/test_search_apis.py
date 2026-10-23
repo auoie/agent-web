@@ -21,7 +21,10 @@ from agent_web.search import SearchResult
 from agent_web.search.apis import (
     ALL_OPERATORS,
     APIS,
+    BOOLEAN,
     PHRASES,
+    SITE_PATHS,
+    SITES,
     operators_used,
     search,
     split_sites,
@@ -219,7 +222,7 @@ def test_unexpected_answers(config: Config) -> None:
     )
     error_inside = answer(200, {"code": 401, "msg": "invalid api key"})
     assert search(APIS["langsearch"], "q", 1, config, "K", downloader=Downloads(error_inside)) == (
-        SearchApiError("LangSearch", 200, "invalid api key")
+        SearchApiError("LangSearch", 401, "invalid api key")  # its own code: a rejected key
     )
     assert search(APIS["brave"], "q", 1, config, "K", downloader=Downloads(answer(200, {}))) == []
 
@@ -306,10 +309,15 @@ JOBS = '(site:a.io OR site:b.io) "new grad" OR junior -senior filetype:pdf intit
 
 def test_operators_used() -> None:
     assert operators_used("sqlite wal") == frozenset()
-    assert operators_used("(site:a.io OR site:b.io) jobs -site:c.io") == frozenset()  # sites only
-    assert operators_used(JOBS) == ALL_OPERATORS
+    assert operators_used("(site:a.io OR site:b.io) jobs -site:c.io") == {SITES}  # sites only
+    assert operators_used("site:a.io OR site:b.io jobs") == {SITES}  # the OR joins only sites
+    assert operators_used(JOBS) == ALL_OPERATORS - {SITE_PATHS}
     assert operators_used("write-ahead log") == frozenset()  # a hyphen inside a word
     assert operators_used('"exact words" here') == {PHRASES}
+    assert operators_used("C (programming language) history") == frozenset()  # just grouping
+    assert operators_used("rust | go") == {BOOLEAN}
+    assert operators_used("rust site:github.com/rust-lang") == {SITES, SITE_PATHS}
+    assert operators_used("rust site:https://docs.rs/") == {SITES}  # a scheme and slash aren't
 
 
 def test_queries_are_sent_as_written(config: Config) -> None:
@@ -322,3 +330,52 @@ def test_queries_are_sent_as_written(config: Config) -> None:
     downloads = Downloads(answer(200, ANSWERS["brave"]([])))
     search(APIS["brave"], JOBS, 1, config, "K", downloader=downloads)
     assert parse_qs(urlsplit(downloads.calls[0][0]).query)["q"] == [JOBS]
+
+
+def test_firecrawl_reads_site_in_the_query(config: Config) -> None:
+    """Its domain filters can't include and exclude at once, and take hostnames only."""
+    downloads = Downloads(answer(200, ANSWERS["firecrawl"]([])))
+    query = "rust site:docs.rs -site:crates.io site:github.com/rust-lang"
+    search(APIS["firecrawl"], query, 1, config, "K", downloader=downloads)
+    body = downloads.body()
+    assert body["query"] == query
+    assert "includeDomains" not in body
+    assert "excludeDomains" not in body
+
+
+def test_domain_filters_get_domains() -> None:
+    assert split_sites("rust site:github.com/rust-lang -site:https://crates.io/") == (
+        "rust",
+        ["github.com"],
+        ["crates.io"],
+    )
+
+
+def test_a_429_about_credit_isnt_retried(config: Config) -> None:
+    sleeps: list[float] = []
+    out = answer(429, {"error": "Your account has run out of searches."})
+    failed = search(
+        APIS["serpapi"], "q", 1, config, "K", downloader=Downloads(out), sleep=sleeps.append
+    )
+    assert failed == SearchApiError("SerpAPI", 429, "Your account has run out of searches.")
+    assert sleeps == []
+
+
+def test_retries_take_a_rate_limit_slot(config: Config) -> None:
+    busy = answer(429, {"message": "Too many requests"})
+    sleeps: list[float] = []
+    slots = [2.5, None]
+    downloads = Downloads(busy, busy, busy)
+    failed = search(
+        APIS["brave"],
+        "q",
+        1,
+        config,
+        "K",
+        downloader=downloads,
+        sleep=sleeps.append,
+        pace=lambda: slots.pop(0),
+    )
+    assert failed == SearchApiError("Brave", 429, "Too many requests")
+    assert sleeps == [2.5]  # the slot came later than the usual 1.1 s
+    assert len(downloads.calls) == 2  # no slot for a second retry: not sent

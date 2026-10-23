@@ -9,15 +9,14 @@ search.engine sets which engine is asked first.
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import assert_never
+from typing import Protocol, assert_never
 
 from agent_web.config import API_KEY_ENV, KEYLESS_APIS, Config, fallback_order, usable
 from agent_web.failures import (
-    OUT_OF_CREDIT_STATUSES,
     SEARCH_PAUSE_MINUTES,
     Captcha,
     ConsentRequired,
@@ -29,13 +28,15 @@ from agent_web.failures import (
     NotSignedIn,
     SearchApiError,
     SearchBudgetUsed,
+    SearchHttpError,
     SearchPaused,
     describe,
     key_rejected,
+    out_of_credit,
 )
 from agent_web.search import SearchResult, SearchResults, apis, google
 from agent_web.search.apis import APIS, OPERATORS, Api, operators_used
-from agent_web.search.ledger import Ledger, ledger_for
+from agent_web.search.ledger import AtLimit, Ledger, Skipped, clock, ledger_for
 
 # The ways Google can refuse that a search API can make up for.
 GoogleRefusal = (
@@ -46,24 +47,29 @@ GoogleRefusal = (
     | NotSignedIn
     | CookieReadFailure
     | ConsentRequired
+    | SearchHttpError
 )
 GoogleSearch = Callable[..., SearchResults | Failure]
-ApiSearch = Callable[[Api, str, int, Config, str], list[SearchResult] | Failure]
+
+
+class ApiSearch(Protocol):
+    def __call__(
+        self,
+        api: Api,
+        query: str,
+        page: int,
+        config: Config,
+        key: str,
+        *,
+        pace: Callable[[], float | None],
+    ) -> list[SearchResult] | Failure: ...
+
 
 # How long an API that couldn't answer is skipped (one out of credit: until the next UTC day).
 KEY_REJECTED_SECONDS = 3600
 SHORT_SKIP_SECONDS = 60
 # A search waits this long at most for a slot under an API's rate limit, else asks the next one.
 MAX_PACE_WAIT = 3.0
-_OUT_OF_CREDIT = re.compile(
-    r"credit|quota|usage limit|plan's|run out|ran out|insufficient|payment|upgrade|daily|per day|"
-    r"monthly|per month|\bTPD\b",
-    re.IGNORECASE,
-)
-# "Request rate limit exceeded" (Brave's per-second limit) is not "out of credit".
-_RATE_LIMITED = re.compile(
-    r"rate.?limit|too many requests|per second|per minute|\bRPS\b|\bTPM\b|concurren", re.IGNORECASE
-)
 
 
 def why_google(refusal: GoogleRefusal) -> str:
@@ -90,6 +96,8 @@ def why_google(refusal: GoogleRefusal) -> str:
             return f"Google can't be used: agent-web can't read {browser}'s cookies"
         case ConsentRequired():
             return "Google shows a consent page"
+        case SearchHttpError(_, status):
+            return f"Google answered HTTP {status}"
         case _:
             assert_never(refusal)
 
@@ -99,11 +107,7 @@ def setback(failure: Failure, now: float) -> tuple[str, float]:
     if not isinstance(failure, SearchApiError):
         return f"failed ({describe(failure)})", now + SHORT_SKIP_SECONDS
     status, detail = failure.status, failure.detail
-    if (
-        failure.used_up
-        or status in OUT_OF_CREDIT_STATUSES
-        or (_OUT_OF_CREDIT.search(detail) and not _RATE_LIMITED.search(detail))
-    ):
+    if out_of_credit(failure):
         tomorrow = datetime.fromtimestamp(now, UTC).date() + timedelta(days=1)
         midnight = datetime(tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC)
         return "is out of credit", midnight.timestamp()
@@ -114,8 +118,18 @@ def setback(failure: Failure, now: float) -> tuple[str, float]:
     return f"failed (HTTP {status}{': ' + detail if detail else ''})", now + SHORT_SKIP_SECONDS
 
 
-def _clock(timestamp: float) -> str:
-    return time.strftime("%H:%M UTC", time.gmtime(timestamp))
+def _can_answer(chain: list[str], page: int, ledger: Ledger) -> bool:
+    """Whether one of the search APIs in `chain` could be asked now: it isn't being skipped and
+    gives this page. (Its rate limit is checked when it's asked.)"""
+    skips = ledger.skips()
+    return any(name not in skips and page <= APIS[name].max_page for name in chain)
+
+
+def _key_hint(outcome: SearchResults | Failure, config: Config) -> SearchResults | Failure:
+    """A used-up Google budget suggests adding a search API key, unless the config has keys."""
+    if isinstance(outcome, SearchBudgetUsed) and config.api_keys:
+        return replace(outcome, api_hint=False)
+    return outcome
 
 
 def search(
@@ -132,7 +146,9 @@ def search(
 ) -> SearchResults | Failure:
     """One results page from `engine` only, or from the first engine that can answer."""
     if engine == "google":
-        return google_search(query, page, config, budget_wait=google.BUDGET_WAIT_SECONDS)
+        outcome = google_search(query, page, config, budget_wait=google.BUDGET_WAIT_SECONDS)
+        return _key_hint(outcome, config)
+    ledger = ledger or ledger_for(config)
     primary: Failure | None = None
     reasons: list[str] = []
     if engine is not None:
@@ -141,17 +157,17 @@ def search(
         chain = [config.search_engine, *fallback_order(config)]
     else:
         chain = list(fallback_order(config))
-        # With search APIs to fall back on, a search doesn't wait for a Google slot.
-        budget_wait = 0.0 if chain else google.BUDGET_WAIT_SECONDS
+        # With a search API to fall back on, a search doesn't wait for a Google slot.
+        can_fall_back = _can_answer(chain, page, ledger)
+        budget_wait = 0.0 if can_fall_back else google.BUDGET_WAIT_SECONDS
         outcome = google_search(query, page, config, budget_wait=budget_wait)
         if isinstance(outcome, SearchResults) or not chain:
-            return outcome
+            return _key_hint(outcome, config)
         if not isinstance(outcome, GoogleRefusal):
             return outcome
         primary = outcome
         reasons.append(why_google(outcome))
 
-    ledger = ledger or ledger_for(config)
     needs = operators_used(query)
     if engine is None and needs:
         # Engines that understand the query's operators first (search.engine stays first).
@@ -173,16 +189,25 @@ def search(
             tried.append((api.title, f"gives only {pages} of results"))
             continue
         # A named engine is asked even while skipped (e.g. to check it after topping up).
-        if engine is None and (skipped := ledger.skipped(name)) is not None:
-            tried.append((api.title, f"{skipped.why} (skipped until {_clock(skipped.until)})"))
-            continue
-        claimed, wait = ledger.claim(name, *api.rate, MAX_PACE_WAIT)
-        if not claimed:
-            tried.append((api.title, f"is at its limit of {api.rate_text} (next in {wait:.0f} s)"))
-            continue
-        if wait:
-            sleep(wait)
-        found = api_search(api, query, page, config, key)
+        claimed = ledger.claim(name, *api.rate, MAX_PACE_WAIT, honor_skip=engine is None)
+        match claimed:
+            case Skipped(until, why):
+                tried.append((api.title, f"{why} (skipped until {clock(until)})"))
+                continue
+            case AtLimit(seconds_left):
+                limit = f"is at its limit of {api.rate_text} (next in {seconds_left:.0f} s)"
+                tried.append((api.title, limit))
+                continue
+            case wait:
+                if wait:
+                    sleep(wait)
+
+        def pace(name: str = name, api: Api = api) -> float | None:
+            """A rate-limit slot for a retry (see apis.search)."""
+            slot = ledger.claim(name, *api.rate, MAX_PACE_WAIT, honor_skip=False)
+            return slot if isinstance(slot, float) else None
+
+        found = api_search(api, query, page, config, key, pace=pace)
         if isinstance(found, list):
             ledger.count(name)
             because = [*reasons, *(f"{title} {why}" for title, why in tried)]

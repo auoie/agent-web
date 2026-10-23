@@ -16,7 +16,6 @@ import configparser
 import contextlib
 import fcntl
 import json
-import os
 import shutil
 import sqlite3
 import subprocess
@@ -32,6 +31,7 @@ from agent_web.config import Config
 from agent_web.cookies import MILLISECONDS_THRESHOLD
 from agent_web.jsonvalue import as_dict, as_list, get_bool, get_float, get_str
 from agent_web.search.limiter import OverBudget, Paused, RateLimiter
+from agent_web.statefile import atomic_write
 
 # At most one browser refresh a minute, across processes; a search blocked sooner reuses the last
 # refresh's cookies or pauses.
@@ -263,11 +263,7 @@ class RefreshedCookies:
             for e in self._entries()
             if (get_str(e, "host"), get_str(e, "name"), get_str(e, "path", "/")) not in new
         ]
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".tmp-")  # created as 0600
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump([*kept, *new.values()], handle)
-        Path(tmp).replace(self.path)
+        atomic_write(self.path, json.dumps([*kept, *new.values()]).encode("utf-8"))
 
 
 @contextlib.contextmanager

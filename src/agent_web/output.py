@@ -342,11 +342,13 @@ def render_fetch(
     offset: int,
     max_chars: int,
     find: str | None = None,
+    whole_page: bool = False,
     fence: Callable[[], str] = new_fence,
     now: Callable[[], float] = time.time,
 ) -> str:
     """The header, then the page's text. Everything the page wrote (its title and text) is inside
-    an untrusted block; everything agent-web adds is outside."""
+    an untrusted block; everything agent-web adds is outside. `whole_page` says the text came
+    from --whole-page, so the hints for reading on keep it: offsets point into that text."""
     content = result.content
     meta = content.meta
     text = body(content)
@@ -361,7 +363,7 @@ def render_fetch(
     if isinstance(content, BinaryFile):
         return "\n".join(lines)
     tag = fence()
-    quoted_url = shlex.quote(meta.url)
+    command = f"web fetch {shlex.quote(meta.url)}" + (" --whole-page" if whole_page else "")
 
     if find is not None:
         passages, total = find_passages(text, find, max_chars)
@@ -377,8 +379,8 @@ def render_fetch(
             shown_heading = passage.heading_offset
         if passages:
             lines.append(
-                f"[Read on after a passage with: web fetch {quoted_url} --offset END (its end "
-                "offset). To see what comes before one, use a little less than its start offset.]"
+                f"[Read on after a passage with: {command} --offset END (its end offset). To see "
+                "what comes before one, use a little less than its start offset.]"
             )
         return "\n".join(lines)
 
@@ -390,9 +392,7 @@ def render_fetch(
         lines += [f"<{tag}>", text[start:end], f"</{tag}>"]
     if end < len(text):
         remaining = len(text) - end
-        lines.append(
-            f"[{remaining:,} more chars. Continue with: web fetch {quoted_url} --offset {end}]"
-        )
+        lines.append(f"[{remaining:,} more chars. Continue with: {command} --offset {end}]")
     return "\n".join(lines)
 
 

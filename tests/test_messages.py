@@ -6,8 +6,10 @@ import pytest
 
 from agent_web.failures import (
     EXIT_BLOCKED,
+    EXIT_HTTP_ERROR,
     EXIT_NETWORK,
     EXIT_USAGE,
+    CacheUnwritable,
     Captcha,
     ConsentRequired,
     CookieReadFailure,
@@ -22,6 +24,7 @@ from agent_web.failures import (
     PrivateAddress,
     SearchApiError,
     SearchBudgetUsed,
+    SearchHttpError,
     SearchPaused,
     TooLarge,
     ToolMissing,
@@ -91,7 +94,13 @@ FAILURES: list[tuple[Failure, int, str]] = [
         EXIT_BLOCKED,
         "no search engine could answer: Brave rejected the API key",
     ),
+    (SearchHttpError("Google", 503), EXIT_HTTP_ERROR, "Google answered HTTP 503 instead of"),
+    (CacheUnwritable("/c", "Read-only file system"), EXIT_USAGE, "/c (Read-only file system)"),
 ]
+
+
+def test_the_key_hint_is_left_out_when_the_config_has_keys() -> None:
+    assert "With a search API key" not in describe(SearchBudgetUsed("Google", 20, 40, False))
 
 
 @pytest.mark.parametrize(("failure", "code", "fragment"), FAILURES)

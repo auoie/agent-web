@@ -99,6 +99,8 @@ def test_full_config(tmp_path: Path) -> None:
         ({"search": {"google_searches_per_10_minutes": -1}}, "must be >= 0"),
         ({"keys": {"brave": ""}}, "non-empty string"),
         ({"search": {"brave_api_key": "x"}}, "unknown key search.brave_api_key"),
+        ({"fetch": {"max_download_mb": float("inf")}}, "must be a number"),  # TOML has inf
+        ({"output": {"max_chars": float("nan")}}, "must be a number"),
     ],
 )
 def test_invalid_config(data: dict[str, Any], message: str) -> None:
@@ -151,3 +153,9 @@ def test_keyless_apis_need_the_users_say_so() -> None:
     parsed = parse_config({"search": {"keyless": True}})
     assert isinstance(parsed, Config)
     assert parsed.keyless
+
+
+def test_international_cookie_domains_are_matched_in_ascii() -> None:
+    config = parse_config({"fetch": {"cookie_domains": ["Bücher.de"]}})
+    assert isinstance(config, Config)
+    assert config.cookie_domains == ("xn--bcher-kva.de",)  # the form validate_url gives hosts

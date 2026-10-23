@@ -34,6 +34,7 @@ from agent_web.failures import (
     JavaScriptWall,
     NotSignedIn,
     SearchBudgetUsed,
+    SearchHttpError,
     SearchPaused,
 )
 from agent_web.http import DownloadFailure, HttpResponse, download
@@ -41,7 +42,7 @@ from agent_web.invisible import reveal
 from agent_web.search import RESULTS_PER_PAGE, SearchResult, SearchResults
 from agent_web.search.limiter import OverBudget, Paused, RateLimiter, limiter_for
 from agent_web.search.refresh import Refresher, refresher_for
-from agent_web.urls import domain_matches, normalize
+from agent_web.urls import domain_matches, hostname, normalize
 
 SEARCH_URL = "https://www.google.com/search"
 SERVICE = "Google"
@@ -175,18 +176,22 @@ def parse_results(html_text: str) -> list[SearchResult]:
 
 def classify_response(
     response: HttpResponse, html_text: str, results: list[SearchResult]
-) -> Captcha | ConsentRequired | JavaScriptWall | None:
+) -> Captcha | ConsentRequired | JavaScriptWall | SearchHttpError | None:
     """Why a Google response isn't a usable results page, or None if it is."""
     urls = (response.url, *response.redirects)
     if any("/sorry/" in url for url in urls):
         return Captcha(SERVICE)
-    if any((urlsplit(url).hostname or "").startswith("consent.google.") for url in urls):
+    if any(hostname(url).startswith("consent.google.") for url in urls):
         return ConsentRequired(SERVICE)
     if results:
         return None
     lowered = html_text.lower()
     if "unusual traffic" in lowered or "captcha-form" in lowered:
         return Captcha(SERVICE)
+    # An error page has no results, but it isn't an empty results page, and the JavaScript check
+    # below (which pauses searches) mustn't be read into it.
+    if response.status >= 400:
+        return SearchHttpError(SERVICE, response.status)
     # Every results page, including a genuinely empty one, carries a hidden "enable JavaScript"
     # fallback, so an empty page has to be recognized before that check. Searches use hl=en.
     if "did not match any documents" in lowered:
@@ -203,8 +208,8 @@ class GoogleCookies:
         self.cookies = list(cookies)
 
     def for_url(self, url: str) -> dict[str, str]:
-        host = (urlsplit(url).hostname or "").lower()
-        return cookies_for_url(self.cookies, url) if domain_matches(host, "google.com") else {}
+        google = domain_matches(hostname(url), "google.com")
+        return cookies_for_url(self.cookies, url) if google else {}
 
 
 def signed_in(cookies: Iterable[Cookie]) -> bool:
@@ -225,6 +230,12 @@ def overlay(base: list[Cookie], extra: list[Cookie]) -> list[Cookie]:
     """`base` with each cookie that `extra` also has replaced by the one from `extra`."""
     replaced = {(c.domain, c.name, c.path) for c in extra}
     return [c for c in base if (c.domain, c.name, c.path) not in replaced] + extra
+
+
+def _same_cookies(a: list[Cookie], b: list[Cookie]) -> bool:
+    return {(c.domain, c.name, c.path, c.value) for c in a} == {
+        (c.domain, c.name, c.path, c.value) for c in b
+    }
 
 
 def _paused(paused: Paused) -> SearchPaused:
@@ -328,8 +339,11 @@ def search(
             return _paused(refreshed)
         if isinstance(refreshed, str):
             refresher.log(f"refresh failed: {refreshed}")
+        elif _same_cookies(retry_cookies := overlay(cookies, refreshed.cookies), cookies):
+            # A refresh another search reused that this one had already sent: the same request
+            # again would only spend a request on the block.
+            refresher.log(f"{refreshed.how}; not retried: the blocked search already sent them")
         else:
-            retry_cookies = overlay(cookies, refreshed.cookies)
             retried = _attempt(url, config, retry_cookies, downloader, limiter, budget_wait, sleep)
             refresher.log(f"{refreshed.how}; the retry {_retry_result(retried)}")
             # Only an answer from Google replaces its check: a retry that couldn't be sent (the

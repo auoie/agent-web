@@ -13,6 +13,7 @@ source = { editable = "." }
 dependencies = [
     { name = "browser-cookie3" },
     { name = "curl-cffi" },
+    { name = "idna" },
     { name = "lxml" },
     { name = "pymupdf" },
 ]
@@ -35,6 +36,7 @@ dev = [
 requires-dist = [
     { name = "browser-cookie3", specifier = ">=0.20" },
     { name = "curl-cffi", specifier = ">=0.10" },
+    { name = "idna", specifier = ">=3.7" },
     { name = "lxml", specifier = ">=5.3" },
     { name = "pymupdf", specifier = ">=2.0" },
     { name = "pypandoc-binary", marker = "extra == 'bundled-pandoc'", specifier = ">=1.13" },
@@ -55,7 +57,7 @@ name = "browser-cookie3"
 version = "0.20.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jeepney", marker = "'bsd' in sys_platform or sys_platform == 'linux'" },
+    { name = "jeepney", marker = "sys_platform == 'linux' or 'bsd' in sys_platform" },
     { name = "lz4" },
     { name = "pycryptodomex" },
     { name = "shadowcopy", marker = "sys_platform == 'win32'" },
@@ -339,6 +341,15 @@ version = "25.12.19"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl", hash = "sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4", size = 26661, upload-time = "2025-12-19T23:16:13.622Z" },
+]
+
+[[package]]
+name = "idna"
+version = "3.20"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz", hash = "sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44", size = 216463, upload-time = "2026-09-17T14:11:04.752Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl", hash = "sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c", size = 69583, upload-time = "2026-09-17T14:11:03.168Z" },
 ]
 
 [[package]]

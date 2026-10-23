@@ -6,13 +6,16 @@ import ipaddress
 import socket
 from urllib.parse import urlsplit, urlunsplit
 
+import idna
+
 from agent_web.failures import InvalidUrl, NetworkFailure, PrivateAddress
 
 MAX_URL_LENGTH = 8192
 
 
 def validate_url(url: str) -> str | InvalidUrl:
-    """The URL (stripped) if it is an absolute http(s) URL without credentials."""
+    """The URL (stripped) if it is an absolute http(s) URL without credentials, with an
+    internationalized host name in its ASCII form (see ascii_domain)."""
     url = url.strip()
     if len(url) > MAX_URL_LENGTH:
         return InvalidUrl(url[:80] + "…", f"longer than {MAX_URL_LENGTH} characters")
@@ -24,14 +27,39 @@ def validate_url(url: str) -> str | InvalidUrl:
     if parts.username is not None or parts.password is not None:
         return InvalidUrl(url, "embedded credentials are not allowed")
     try:
-        _ = parts.port
+        port = parts.port
     except ValueError:
         return InvalidUrl(url, "invalid port")
-    return url
+    if parts.hostname.isascii():
+        return url
+    host = ascii_domain(parts.hostname)
+    if host is None:
+        return InvalidUrl(url, "invalid international domain name")
+    return urlunsplit(parts._replace(netloc=host if port is None else f"{host}:{port}"))
+
+
+def ascii_domain(domain: str) -> str | None:
+    """A domain name in the ASCII form DNS uses (`bücher.de` → `xn--bcher-kva.de`, by UTS 46 as
+    browsers do), or None if it isn't a valid one. The private-address check, the pinned
+    connection and cookie matching all see this one name: Python's own IDNA codec and curl's
+    disagree on some names (`faß.de`), and curl looks up the ASCII form."""
+    if domain.isascii():
+        return domain.lower()
+    try:
+        return idna.encode(domain, uts46=True).decode("ascii")
+    except idna.IDNAError:
+        return None
 
 
 def hostname(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
+
+
+def origin(url: str) -> tuple[str, str, int]:
+    """Scheme, host and port, with the scheme's default port filled in."""
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    return scheme, hostname(url), parts.port or (443 if scheme == "https" else 80)
 
 
 def is_public_ip(address: str) -> bool:

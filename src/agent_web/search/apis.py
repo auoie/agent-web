@@ -3,7 +3,8 @@
 Each Api says how to ask for one results page (one HTTP request) and where the title, URL and
 snippet of each result are in its JSON answer. Only the query goes to the provider, with the
 user's key; never cookies. Search operators: `site:` and `-site:` become the provider's domain
-filters where it has them; the rest of the query is passed as written.
+filters where it has them and doesn't read them in the query; the rest of the query is passed as
+written.
 """
 
 from __future__ import annotations
@@ -18,10 +19,10 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode
 
 from agent_web.config import Config
-from agent_web.failures import Failure, SearchApiError
+from agent_web.failures import Failure, SearchApiError, out_of_credit
 from agent_web.http import DownloadFailure, HttpResponse, download
 from agent_web.invisible import reveal
-from agent_web.jsonvalue import as_dict, as_list, get_str
+from agent_web.jsonvalue import as_dict, as_list, get_int, get_str
 from agent_web.search import MAX_PAGE, RESULTS_PER_PAGE, SearchResult
 from agent_web.urls import normalize
 
@@ -73,16 +74,19 @@ class Api:
 _SITE = re.compile(r"(?<![^\s(])(-?)site:([^\s()]+)", re.IGNORECASE)
 
 
-# Kinds of Google-style operators besides site: (which every API handles, natively or as a filter).
+# Kinds of Google-style operators. Most APIs handle site: natively or as a domain filter.
 PHRASES = "quoted phrases"
 BOOLEAN = "OR/AND/NOT"
 EXCLUDE = "-word exclusions"
 FIELDS = "operators like filetype: and intitle:"
-OPERATORS = (PHRASES, BOOLEAN, EXCLUDE, FIELDS)
+SITES = "site:"
+SITE_PATHS = "site: with a path"  # domain filters take only the domain
+OPERATORS = (PHRASES, BOOLEAN, EXCLUDE, FIELDS, SITES, SITE_PATHS)
 ALL_OPERATORS = frozenset(OPERATORS)
 
 _PHRASE = re.compile(r'"[^"]*"')
-_BOOLEAN = re.compile(r"(?<!\S)(?:OR|AND|NOT)(?!\S)|[()|]")
+# Parentheses only group: on their own (`C (programming language)`) they aren't an operator.
+_BOOLEAN = re.compile(r"(?<!\S)(?:OR|AND|NOT)(?!\S)|\|")
 _EXCLUDE = re.compile(r'(?<![^\s(])-(?!site:)(?:"[^"]*"|[^\s()]+)', re.IGNORECASE)
 _FIELD = re.compile(
     r"(?<![^\s(])-?(?:filetype|ext|intitle|allintitle|inurl|allinurl|intext|allintext|inbody|"
@@ -90,31 +94,46 @@ _FIELD = re.compile(
     re.IGNORECASE,
 )
 _SITES_ONLY_GROUP = re.compile(r"\(\s*(?:OR\s*)*\)")
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+
+
+def _without_sites(query: str) -> str:
+    """The query without its site: and -site: terms, and without the groups and ORs that joined
+    only them (`(site:a.com OR site:b.com) rust` → `rust`)."""
+    rest = _SITES_ONLY_GROUP.sub(" ", _SITE.sub(" ", query))
+    rest = re.sub(r"\bOR(?:\s+OR\b)+", "OR", rest)
+    rest = re.sub(r"^\s*OR\b|\bOR\s*$", "", rest.strip())
+    return " ".join(rest.split())
+
+
+def _site_path(value: str) -> str:
+    """A site: value without a scheme or trailing slash: `docs.rs`, `github.com/rust-lang`."""
+    return _SCHEME.sub("", value).rstrip("/").lower()
 
 
 def operators_used(query: str) -> frozenset[str]:
-    """The kinds of operators (OPERATORS) a query uses, besides site:."""
-    rest = _SITES_ONLY_GROUP.sub(" ", _SITE.sub(" ", query))
+    """The kinds of operators (OPERATORS) a query uses."""
+    sites = [_site_path(match.group(2)) for match in _SITE.finditer(query)]
+    rest = _without_sites(query)
     patterns = ((PHRASES, _PHRASE), (BOOLEAN, _BOOLEAN), (EXCLUDE, _EXCLUDE), (FIELDS, _FIELD))
-    return frozenset(kind for kind, pattern in patterns if pattern.search(rest))
+    kinds = {kind for kind, pattern in patterns if pattern.search(rest)}
+    if sites:
+        kinds.add(SITES)
+    if any("/" in site for site in sites):
+        kinds.add(SITE_PATHS)
+    return frozenset(kinds)
 
 
 def split_sites(query: str) -> tuple[str, list[str], list[str]]:
     """`site:` and `-site:` taken out of the query, for APIs with domain filters:
-    (rest of the query, domains to include, domains to exclude)."""
+    (rest of the query, domains to include, domains to exclude). Filters take domains, so a
+    site: path keeps only its domain (operators_used reports the path as SITE_PATHS)."""
     include: list[str] = []
     exclude: list[str] = []
-
-    def take(match: re.Match[str]) -> str:
-        (exclude if match.group(1) else include).append(match.group(2).lower())
-        return " "
-
-    rest = _SITE.sub(take, query)
-    rest = _SITES_ONLY_GROUP.sub(" ", rest)  # groups that held only sites
-    rest = re.sub(r"\bOR(?:\s+OR\b)+", "OR", rest)
-    rest = re.sub(r"^\s*OR\b|\bOR\s*$", "", rest.strip())
-    rest = " ".join(rest.split())
-    return (rest or query), include, exclude
+    for match in _SITE.finditer(query):
+        domain = _site_path(match.group(2)).split("/", 1)[0]
+        (exclude if match.group(1) else include).append(domain)
+    return (_without_sites(query) or query), include, exclude
 
 
 def _domains(query: str, include_key: str, exclude_key: str) -> tuple[str, dict[str, object]]:
@@ -211,12 +230,12 @@ def _parallel(query: str, page: int, key: str) -> Request:
 
 
 def _firecrawl(query: str, page: int, key: str) -> Request:
-    rest, domains = _domains(query, "includeDomains", "excludeDomains")
+    # Firecrawl reads site: and -site: in the query. Its domain filters can't include and exclude
+    # at once and take hostnames only, so they aren't used.
     body: dict[str, object] = {
-        "query": rest,
+        "query": query,
         "limit": page * RESULTS_PER_PAGE,
         "sources": [{"type": "web"}],
-        **domains,
     }
     # Without a key, Firecrawl answers anyway, up to a daily cap per IP address.
     return Request("https://api.firecrawl.dev/v2/search", _bearer(key) if key else {}, body)
@@ -267,7 +286,7 @@ APIS: dict[str, Api] = {
             "1,000 searches a month",
             _tavily,
             lambda data: _fields(_items(data, "results"), "title", "url", "content"),
-            frozenset({PHRASES}),
+            frozenset({PHRASES, SITES}),
             (100, 60),
             max_page=2,
             from_start=True,
@@ -278,7 +297,7 @@ APIS: dict[str, Api] = {
             "$10 of credit a month",
             _exa,
             lambda data: _fields(_items(data, "results"), "title", "url", "highlights", "text"),
-            frozenset(),
+            frozenset({SITES}),
             (10, 1),
             max_page=2,
             from_start=True,
@@ -289,7 +308,7 @@ APIS: dict[str, Api] = {
             "$5 of credit a month",
             _parallel,
             lambda data: _fields(_items(data, "results"), "title", "url", "excerpts"),
-            frozenset(),
+            frozenset(),  # no domain filters in its documented request: site: is sent as text
             (10, 1),  # documented as 600 a minute
             max_page=1,
         ),
@@ -299,7 +318,7 @@ APIS: dict[str, Api] = {
             "500 searches a month with a key; without one, a daily cap per IP address",
             _firecrawl,
             lambda data: _fields(_items(data, "data", "web"), "title", "url", "description"),
-            frozenset({PHRASES, EXCLUDE, FIELDS}),
+            frozenset({PHRASES, EXCLUDE, FIELDS, SITES}),
             (10, 60),
             max_page=2,
             from_start=True,
@@ -310,7 +329,7 @@ APIS: dict[str, Api] = {
             "free, with a daily allowance",
             _langsearch,
             _langsearch_results,
-            frozenset(),
+            frozenset({SITES}),
             (5, 1),
             from_start=True,
         ),
@@ -412,6 +431,16 @@ def _hide(failure: DownloadFailure, key: str) -> DownloadFailure:
     return replace(failure, **hidden)
 
 
+def _error(api: Api, response: HttpResponse) -> SearchApiError:
+    retry_after = _retry_after(response.headers.get("retry-after", ""))
+    used_up = response.status == 429 and _quota_used_up(response.headers)
+    detail = _detail(response.content)
+    if used_up:  # retrying won't help, and the next search shouldn't ask either
+        detail = f"{detail}; its quota is used up" if detail else "its quota is used up"
+    wait = retry_after if response.status == 429 else 0.0
+    return SearchApiError(api.title, response.status, detail, wait, used_up)
+
+
 def search(
     api: Api,
     query: str,
@@ -421,8 +450,14 @@ def search(
     *,
     downloader: Downloader = download,
     sleep: Callable[[float], None] = time.sleep,
+    pace: Callable[[], float | None] | None = None,
 ) -> list[SearchResult] | Failure:
-    """One results page (1 is the first) from `api`."""
+    """One results page (1 is the first) from `api`.
+
+    An HTTP 429 that is about requests per second is retried. `pace` claims a slot under the
+    API's rate limit for each retry, like the first request's: the seconds to wait, or None if
+    there's none soon (then it isn't retried).
+    """
     request = api.build(query, page, key)
     headers = {"Accept": "application/json", **request.headers}
     body = None
@@ -441,23 +476,27 @@ def search(
         )
         if not isinstance(response, HttpResponse):
             return _hide(response, key)
-        retry_after = _retry_after(response.headers.get("retry-after", ""))
-        used_up = response.status == 429 and _quota_used_up(response.headers)
-        if response.status != 429 or used_up or attempt == RETRIES or retry_after > MAX_RETRY_WAIT:
+        if response.status != 429:
             break
+        failure = _error(api, response)
+        if attempt == RETRIES or failure.retry_after > MAX_RETRY_WAIT or out_of_credit(failure):
+            return failure
+        slot = 0.0 if pace is None else pace()
+        if slot is None:
+            return failure
         attempt += 1
-        sleep(retry_after or RETRY_SECONDS)
+        sleep(max(failure.retry_after or RETRY_SECONDS, slot))
     if response.status != 200:
-        detail = _detail(response.content)
-        if used_up:  # retrying won't help, and the next search shouldn't ask either
-            detail = f"{detail}; its quota is used up" if detail else "its quota is used up"
-        wait = retry_after if response.status == 429 else 0.0
-        return SearchApiError(api.title, response.status, detail, wait, used_up)
+        return _error(api, response)
     try:
         data: object = json.loads(response.content)
     except ValueError:
         return SearchApiError(api.title, 200, "the answer wasn't JSON")
     found = api.parse(data)
     if found is None:
-        return SearchApiError(api.title, 200, _detail(response.content) or "unexpected answer")
+        # An error inside an HTTP 200 answer (LangSearch's {"code": 401, ...}) counts with its
+        # own code, so a rejected key is recognized as one.
+        code = get_int(as_dict(data) or {}, "code")
+        status = code if 400 <= code < 600 else 200
+        return SearchApiError(api.title, status, _detail(response.content) or "unexpected answer")
     return _results(found, api, page)

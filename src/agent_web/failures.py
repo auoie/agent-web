@@ -96,6 +96,24 @@ class SearchBudgetUsed:
     service: str
     searches: int
     seconds_left: int
+    api_hint: bool = True  # suggest adding a search API key (not when the config has keys)
+
+
+@dataclass(frozen=True)
+class SearchHttpError:
+    """The search engine answered with an error status instead of a results page."""
+
+    service: str
+    status: int
+
+
+@dataclass(frozen=True)
+class CacheUnwritable:
+    """agent-web's cache folder, where it saves fetches and the searches' shared state, can't be
+    written (not writable, disk full, a sandbox)."""
+
+    directory: str
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -134,6 +152,19 @@ OUT_OF_CREDIT_STATUSES = frozenset({402, 432, 433})
 # Brave answers 422 both for an invalid key and for an invalid query (a very long one), so a
 # 422 means a rejected key only when its message is about the key.
 _ABOUT_THE_KEY = re.compile(r"key|token|auth|subscription|credential", re.IGNORECASE)
+# A search API's error message that says its credit or quota is used up.
+_OUT_OF_CREDIT = re.compile(
+    r"credit|quota|usage limit|plan's|run out|ran out|insufficient|payment|upgrade|daily|per day|"
+    r"monthly|per month|\bTPD\b",
+    re.IGNORECASE,
+)
+# The words that say so even next to a rejected key's status (401/403): "insufficient" or
+# "upgrade" there are about the key's permissions or plan.
+_CREDIT_OR_QUOTA = re.compile(r"credit|quota|run out|ran out", re.IGNORECASE)
+# "Request rate limit exceeded" (Brave's per-second limit) is not "out of credit".
+_RATE_LIMITED = re.compile(
+    r"rate.?limit|too many requests|per second|per minute|\bRPS\b|\bTPM\b|concurren", re.IGNORECASE
+)
 
 
 Failure: TypeAlias = (
@@ -154,6 +185,8 @@ Failure: TypeAlias = (
     | NoApiKey
     | SearchApiError
     | NoEngineAnswered
+    | SearchHttpError
+    | CacheUnwritable
 )
 
 EXIT_OK = 0
@@ -189,6 +222,10 @@ def exit_code(failure: Failure) -> int:
             return EXIT_BLOCKED if blocked else EXIT_NETWORK
         case NoEngineAnswered(primary=primary):
             return EXIT_BLOCKED if primary is None else exit_code(primary)
+        case SearchHttpError():
+            return EXIT_HTTP_ERROR
+        case CacheUnwritable():
+            return EXIT_USAGE
         case _:
             assert_never(failure)
 
@@ -244,12 +281,10 @@ def describe(failure: Failure) -> str:
                 f"answered a search with {cause}; retrying sooner keeps the block going. Work with "
                 "the pages already found (web fetch still works), or wait"
             )
-        case SearchBudgetUsed():
+        case SearchBudgetUsed(api_hint=api_hint):
             # When no search API could be asked (NoEngineAnswered leaves this hint out).
-            return (
-                f"{_budget_used(failure)}. With a search API key in agent-web's config, another "
-                "engine would answer instead"
-            )
+            hint = ". With a search API key in agent-web's config, another engine would answer "
+            return _budget_used(failure) + (f"{hint}instead" if api_hint else "")
         case NoApiKey(name, env):
             return (
                 f'no API key for {name}: set the {env} environment variable, or {name} = "..." '
@@ -271,6 +306,14 @@ def describe(failure: Failure) -> str:
             if isinstance(primary, SearchBudgetUsed):  # without the hint to add an API key
                 return f"{_budget_used(primary)}. {instead}"
             return f"{describe(primary)}. {instead}"
+        case SearchHttpError(service, status):
+            return f"{service} answered HTTP {status} instead of a results page"
+        case CacheUnwritable(directory, reason):
+            return (
+                f"can't write to agent-web's cache folder {directory} ({reason}): every fetch is "
+                "saved there, and searches keep their shared state there. Make it writable, or "
+                "point cache.dir in the config (or AGENT_WEB_CACHE_DIR) to a folder that is"
+            )
         case _:
             assert_never(failure)
 
@@ -279,6 +322,16 @@ def key_rejected(failure: SearchApiError) -> bool:
     """Whether a search API refused its key: HTTP 401 or 403, or a 422 that says so."""
     status = failure.status
     return status in (401, 403) or (status == 422 and bool(_ABOUT_THE_KEY.search(failure.detail)))
+
+
+def out_of_credit(failure: SearchApiError) -> bool:
+    """Whether a search API's credit or quota is used up: by its rate-limit headers, its status,
+    or its message (unless the message is about a rate limit, or about a rejected key)."""
+    if failure.used_up or failure.status in OUT_OF_CREDIT_STATUSES:
+        return True
+    detail = failure.detail
+    words = _CREDIT_OR_QUOTA if key_rejected(failure) else _OUT_OF_CREDIT
+    return bool(words.search(detail)) and not _RATE_LIMITED.search(detail)
 
 
 def _budget_used(failure: SearchBudgetUsed) -> str:

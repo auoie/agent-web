@@ -292,3 +292,16 @@ def test_doctor_shows_how_long_ago_a_refresh_was() -> None:
     )
     assert _refresh_line(line, now + 3 * 3600).startswith("past refresh, 3 h ago")
     assert _refresh_line("garbage", now) == "past refresh: garbage"
+
+
+def test_an_unwritable_cache_is_a_described_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("x")
+    monkeypatch.setenv("AGENT_WEB_CACHE_DIR", str(blocker / "cache"))
+    for command in (["fetch", "https://example.com/"], ["search", "q"]):
+        code, out, err = run_cli(*command)
+        assert code == 1
+        assert out == ""
+        assert "can't write to agent-web's cache folder" in err

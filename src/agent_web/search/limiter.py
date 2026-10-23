@@ -6,7 +6,6 @@ Every agent on the machine searches with the user's one Google account.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import time
 from collections.abc import Callable, Generator
@@ -15,6 +14,7 @@ from pathlib import Path
 
 from agent_web.config import Config
 from agent_web.jsonvalue import as_dict, as_list, get_float, get_str
+from agent_web.statefile import locked
 
 # The budget counts requests over this window (see RateLimiter).
 BUDGET_WINDOW_SECONDS = 600
@@ -82,17 +82,13 @@ class RateLimiter:
         self._sleep = sleep
 
     @contextlib.contextmanager
-    def _state(self) -> Generator[_LimiterState]:
-        """The shared state, read and written back under an exclusive lock (flock)."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a+", encoding="utf-8") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            handle.seek(0)
-            state = _parse_state(handle.read())
+    def _state(self, write: bool = True) -> Generator[_LimiterState]:
+        """The shared state under an exclusive lock, written back if `write`."""
+        with locked(self.path) as file:
+            state = _parse_state(file.text)
             yield state
-            handle.seek(0)
-            handle.truncate()
-            handle.write(json.dumps(state.__dict__))
+            if write:
+                file.new = json.dumps(state.__dict__)
 
     def wait(self) -> Paused | OverBudget | None:
         """Wait until `min_interval` has passed since the last request and claim the next slot.
@@ -114,7 +110,7 @@ class RateLimiter:
 
     def requests_in_window(self) -> int:
         """Requests sent in the last BUDGET_WINDOW_SECONDS, for `web doctor`."""
-        with self._state() as state:
+        with self._state(write=False) as state:
             now = self._now()
             return sum(1 for t in state.recent if now - BUDGET_WINDOW_SECONDS < t <= now)
 
@@ -125,7 +121,7 @@ class RateLimiter:
 
     def since_refresh(self) -> float:
         """Seconds since the last browser refresh (see refresh.py)."""
-        with self._state() as state:
+        with self._state(write=False) as state:
             return self._now() - state.last_refresh
 
     def note_refresh(self) -> None:
@@ -133,7 +129,7 @@ class RateLimiter:
             state.last_refresh = self._now()
 
     def paused(self) -> Paused | None:
-        with self._state() as state:
+        with self._state(write=False) as state:
             left = state.paused_until - self._now()
             return Paused(left, state.cause) if left > 0 else None
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from agent_web import detect
@@ -33,3 +36,16 @@ def test_textless_pdf_is_flagged_as_scanned() -> None:
 def test_converter_output_does_not_leak_to_stdout(capfd: pytest.CaptureFixture[str]) -> None:
     convert_pdf(make_pdf(["Quiet please"]))
     assert capfd.readouterr().out == ""
+
+
+def test_printed_warnings_dont_reach_a_piped_stdout() -> None:
+    """A pipe's buffer is written out only when full or flushed: text printed while stdout pointed
+    at /dev/null used to come out after it was restored."""
+    code = (
+        "from agent_web.convert.pdf import _quiet_stdout\n"
+        "with _quiet_stdout():\n"
+        "    print('Warning: box has no textlines')\n"
+        "print('after')\n"
+    )
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert run.stdout == "after\n"

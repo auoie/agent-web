@@ -17,6 +17,7 @@ from agent_web.failures import (
     NetworkFailure,
     NotSignedIn,
     SearchBudgetUsed,
+    SearchHttpError,
     SearchPaused,
 )
 from agent_web.http import DownloadFailure, HttpResponse
@@ -534,4 +535,37 @@ def test_a_check_whose_retry_isnt_sent_still_pauses(config: Config) -> None:
     assert limiter.pauses == [("its JavaScript check", 600)]
     assert refresher.lines == [
         "headless firefox, 0.9 s; the retry wasn't sent: the Google budget was used up"
+    ]
+
+
+def test_an_error_status_is_reported_and_doesnt_pause(config: Config) -> None:
+    error = HttpResponse("https://www.google.com/search?q=x", 503, "", {}, b"<p>enablejs</p>")
+    limiter = FakeLimiter()
+
+    def downloader(url: str, **kwargs: object) -> HttpResponse:
+        return error
+
+    outcome = search(
+        "q",
+        1,
+        config,
+        cookie_loader=signed_in_loader,
+        downloader=downloader,
+        limiter=limiter,
+        refresher=None,
+    )
+    assert outcome == SearchHttpError("Google", 503)
+    assert limiter.pauses == []  # an error page isn't a JavaScript check
+
+
+def test_a_reused_refresh_with_nothing_new_isnt_retried(config: Config) -> None:
+    """Another search's refresh, whose cookies this search had already sent."""
+    refresher = FakeRefresher(Refreshed([SG_SS], "reused a refresh 20 s old"), stored=[SG_SS])
+    limiter = FakeLimiter()
+    outcome, sent = refreshing_search(config, [JS_CHECK], refresher, limiter)
+    assert outcome == JavaScriptWall("Google")
+    assert len(sent) == 1
+    assert limiter.pauses == [("its JavaScript check", 600)]
+    assert refresher.lines == [
+        "reused a refresh 20 s old; not retried: the blocked search already sent them"
     ]

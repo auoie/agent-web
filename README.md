@@ -43,16 +43,17 @@ and conversion problems are reported in `Note:` lines; long output can be read i
   - **PDFs** become markdown via pymupdf, with `--- Page N ---` markers. The original is kept.
   - **Reddit threads** come out as the post plus a numbered comment tree (via Reddit's JSON).
   - **GitHub file pages** (`github.com/…/blob/…`) are fetched from `raw.githubusercontent.com`,
-    so code arrives exactly, indentation included.
+    so code arrives exactly, indentation included. If that answers 404 (a private repository),
+    the github.com page is read instead, with a note.
   - **`--find TEXT`** shows only the matching passages, and **`--offset N`** continues a long page.
     Output is capped (25,000 characters by default) to fit agents' output limits (Claude Code cuts
     command output at 30,000 characters).
   - **Every fetch is saved as files:** the full text and the response as downloaded. Agents can
     search the text with `rg`, `sed` or their own file tools, and check the conversion against
     the original.
-  - **Just the main content when a page marks it:** if a page has a single `<main>` element, only
-    that is converted (pandoc's behavior), which drops menus and footers. Real text left outside
-    it is reported, and `--whole-page` includes everything.
+  - **Just the main content when a page marks it:** if a page has a `<main>` element, only that
+    is converted (pandoc's behavior; with several, all of them), which drops menus and footers.
+    Real text left outside is reported, and `--whole-page` includes everything.
   - **Problems are flagged**, never hidden: HTTP errors, bot-check and captcha pages, pages that
     need JavaScript, scanned PDFs, and text that's hidden from human visitors (marked
     `⟦hidden on page: …⟧`).
@@ -149,7 +150,8 @@ What agent-web does do:
   the tags, so the skill says the files' text is the page's.
 - **No local network access.** `localhost`, private, link-local and carrier-grade NAT (Tailscale)
   addresses are refused, including as a redirect target. Every redirect hop is re-checked, the
-  connection goes to the exact addresses that were checked (so DNS rebinding can't redirect it),
+  connection goes to the exact addresses that were checked (so DNS rebinding can't redirect it;
+  international domain names are turned into their ASCII form first, so both see one name),
   and neither cookies nor search API keys follow a redirect to another host.
 - **Terminal safety.** Control characters are removed, so a page can't send escape codes to your
   terminal when you run `web` yourself.
@@ -326,12 +328,13 @@ How it behaves:
   Google and any skipped APIs didn't. The next-page hint keeps `--engine NAME`, so a query's pages
   come from one engine. `web search --engine NAME` asks one engine only.
 - **Operators:** SerpAPI and Serper (Google's results) and Brave take Google-style operators;
-  Firecrawl takes quotes, `-word`, `site:`, `filetype:` and `intitle:`; Tavily takes quoted
-  phrases (its `exact_match`); Exa, Parallel and LangSearch take none. For a query with operators,
-  the engines that understand all of them are tried first. The query is always sent as written;
-  when an engine that doesn't understand some of its operators answers, the `Note:` says which,
-  since its results may not match them. `site:` and `-site:` become domain filters for the APIs
-  that have them. Tavily, Exa and Firecrawl give 2 pages, Parallel 1.
+  Firecrawl takes quotes, `-word`, `site:`, `filetype:` and `intitle:` in the query; Tavily takes
+  quoted phrases (its `exact_match`); Exa, Parallel and LangSearch take none. For a query with
+  operators, the engines that understand all of them are tried first. The query is always sent as
+  written; when an engine that doesn't understand some of its operators answers, the `Note:` says
+  which, since its results may not match them. `site:` and `-site:` become domain filters for
+  Tavily, Exa and LangSearch (domains only: a `site:` path is noted); Parallel has none, which
+  the note says too. Tavily, Exa and Firecrawl give 2 pages, Parallel 1.
 - **Quality** varies (one user's tests, 2026-10-21): Brave and Tavily came closest to Google;
   Exa ranks pages by meaning rather than words and did poorly on a person's name; SerpAPI's copy
   of Google's results missed Google's top hits, even with nothing but the query sent.
@@ -402,7 +405,7 @@ count toward the 200 MB; they're removed only when space is needed, not after an
 
 Exit codes:
 - 0: ok
-- 1: usage, config or missing tool
+- 1: usage, config, missing tool or a cache folder that can't be written
 - 2: network error
 - 3: HTTP error status
 - 4: blocked (captcha, bot check, searches paused, Google budget used up, not signed in, no

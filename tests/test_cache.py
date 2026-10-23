@@ -187,3 +187,10 @@ def test_prune_removes_oldest_across_folders(tmp_path: Path) -> None:
     assert remaining == ["3", "4"]
     newest = cache.save_files("https://example.com/new", "", b"z", ".bin", None)
     assert Path(newest.original).exists()
+
+
+def test_prune_keeps_the_files_a_fetch_just_saved(tmp_path: Path) -> None:
+    cache = PageCache(tmp_path, ttl=600, max_bytes=1000)
+    files = cache.save_files("https://example.com/big", "", b"z" * 5000, ".bin", None)
+    cache.prune(keep=[files.original])
+    assert Path(files.original).exists()  # bigger than the whole cache, but just printed

@@ -5,6 +5,7 @@ Unknown keys are errors, so typos don't silently fall back to defaults.
 
 from __future__ import annotations
 
+import math
 import os
 import tomllib
 from collections.abc import Mapping
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from agent_web.failures import InvalidConfig
+from agent_web.urls import ascii_domain
 
 BROWSERS = ("firefox", "librewolf", "chrome", "chromium", "brave", "vivaldi", "edge", "opera")
 # Search APIs that can answer when Google can't, with the environment variable for each one's key,
@@ -163,8 +165,8 @@ def _number(table: Mapping[str, Any], key: str, where: str, minimum: float) -> f
     if key not in table:
         return None
     value = table[key]
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise _Invalid(f"{where}.{key} must be a number")
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise _Invalid(f"{where}.{key} must be a number")  # TOML allows inf and nan
     if value < minimum:
         raise _Invalid(f"{where}.{key} must be >= {minimum:g}")
     return float(value)
@@ -191,7 +193,7 @@ def _bool(table: Mapping[str, Any], key: str, where: str) -> bool | None:
 def _domain(raw: object, key: str) -> str:
     if not isinstance(raw, str):
         raise _Invalid(f"fetch.{key} must be a list of strings")
-    domain = raw.strip().lower().lstrip(".")
+    domain = ascii_domain(raw.strip().lstrip("."))  # the form URLs are matched in
     if not domain or any(c in domain for c in "/: \t"):
         raise _Invalid(f"fetch.{key}: {raw!r} is not a bare domain like 'reddit.com'")
     return domain

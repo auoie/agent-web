@@ -15,7 +15,7 @@ import lxml.html
 from lxml import etree
 
 from agent_web.convert.pandoc import Pandoc, PandocFailed, html_to_gfm
-from agent_web.invisible import HIDDEN_LABEL
+from agent_web.invisible import HIDDEN_LABEL, without_surrogates
 
 MAX_HTML_CHARS = 5_000_000
 _DROP_TAGS = (
@@ -52,7 +52,7 @@ _HEADER_CHARSET = re.compile(r"charset\s*=\s*[\"']?([A-Za-z0-9_.:-]+)", re.IGNOR
 # <body> tag, it puts HTML5 elements it doesn't know (main, section, article, header, nav, figure,
 # time, ...) and everything after them into <head>, where pandoc ignores them.
 _HEAD_TAGS = frozenset({"title", "base", "link", "meta", "style", "script", "template"})
-# When a page has exactly one <main>, pandoc converts only that element. Text outside it in these
+# When a page has <main> elements, pandoc converts only those. Text outside them in these
 # elements is the boilerplate that behavior is meant to drop; other outside text is reported.
 _BOILERPLATE_TAGS = frozenset({"nav", "header", "footer", "aside", "menu", "form", "button"})
 
@@ -79,7 +79,7 @@ class Prepared:
     hidden_count: int
     text_chars: int
     outside_main_chars: int = 0
-    # Visible text pandoc should keep: the single <main> if the page has one, else everything.
+    # Visible text pandoc should keep: the <main> elements if the page has any, else everything.
     expected_chars: int = 0
 
 
@@ -95,10 +95,15 @@ class HtmlConversion:
 
 
 def _codec(name: str) -> str | None:
+    """The codec for a declared charset, if it is a text encoding. codecs.lookup also knows
+    base64, hex, zlib and the like, which can't decode a page; decoding a byte tells them apart
+    (an empty string would be decoded without checking)."""
     try:
-        return codecs.lookup(name).name
-    except LookupError:
+        codec = codecs.lookup(name).name
+        b"a".decode(codec, errors="replace")
+    except (LookupError, UnicodeError):
         return None
+    return codec
 
 
 _BOMS = (
@@ -122,9 +127,10 @@ def _declared_codec(data: bytes, content_type: str) -> str | None:
 
 
 def decode_html(data: bytes, content_type: str) -> str:
-    """Decode with the header charset, a BOM, a <meta> charset, UTF-8, then Windows-1252."""
+    """Decode with the header charset, a BOM, a <meta> charset, UTF-8, then Windows-1252.
+    Lone surrogates (UTF-7 can produce them) are replaced: lxml stops parsing at one."""
     if codec := _declared_codec(data, content_type):
-        return data.decode(codec, errors="replace")
+        return without_surrogates(data.decode(codec, errors="replace"))
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
@@ -327,13 +333,17 @@ def prepare(html_text: str, base_url: str, whole_page: bool = False) -> Prepared
     if whole_page:
         for main in mains:
             main.tag = "div"
-    elif len(mains) == 1:
-        expected = _visible_text_chars(mains[0])
+    elif mains:
+        # pandoc keeps every <main> (a page may have a hidden second one) and drops the rest.
+        outer = frozenset(m for m in mains if not any(a in mains for a in m.iterancestors()))
+        expected = sum(_visible_text_chars(main) for main in outer)
         body = doc.find("body")
         if isinstance(body, lxml.html.HtmlElement):
-            outside_main = _chars_outside(body, frozenset(mains))
-        # Only labels inside <main> reach the output.
-        hidden_count = sum(1 for e in labeled if e is mains[0] or mains[0] in e.iterancestors())
+            outside_main = _chars_outside(body, outer)
+        # Only labels inside a <main> reach the output.
+        hidden_count = sum(
+            1 for e in labeled if e in outer or any(a in outer for a in e.iterancestors())
+        )
 
     _inline_heading_wrappers(doc)
     return Prepared(

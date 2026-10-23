@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from agent_web.jsonvalue import as_dict, as_list, get_bool, get_float, get_int, get_str
-from agent_web.urls import domain_matches
+from agent_web.urls import domain_matches, hostname
 
 _COMMENTS_PATH = re.compile(r"^/(?:r/[^/]+/)?comments/([a-z0-9]{2,12})(?:/|$)", re.IGNORECASE)
 _SHORT_PATH = re.compile(r"^/([a-z0-9]{2,12})/?$", re.IGNORECASE)
@@ -18,7 +18,7 @@ _SHORT_PATH = re.compile(r"^/([a-z0-9]{2,12})/?$", re.IGNORECASE)
 def thread_id(url: str) -> str | None:
     """The post id for Reddit thread URLs (reddit.com/.../comments/<id>/..., redd.it/<id>)."""
     parts = urlsplit(url)
-    host = (parts.hostname or "").lower()
+    host = hostname(url)
     if domain_matches(host, "reddit.com"):
         match = _COMMENTS_PATH.match(parts.path)
     elif host == "redd.it":

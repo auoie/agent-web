@@ -18,7 +18,15 @@ from agent_web.config import (
     config_path,
     load_config,
 )
-from agent_web.failures import EXIT_OK, EXIT_USAGE, Failure, InvalidConfig, describe, exit_code
+from agent_web.failures import (
+    EXIT_OK,
+    EXIT_USAGE,
+    CacheUnwritable,
+    Failure,
+    InvalidConfig,
+    describe,
+    exit_code,
+)
 from agent_web.search import MAX_PAGE
 
 SEARCH_QUOTING_HINT = (
@@ -105,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument(
         "--whole-page",
         action="store_true",
-        help="convert the entire page, not just its <main> element (when it has exactly one)",
+        help="convert the entire page, not just its <main> element (when it has one)",
     )
     output = fetch.add_mutually_exclusive_group()
     output.add_argument("--json", action="store_true", help="print JSON instead of text")
@@ -133,6 +141,14 @@ def _fail(failure: Failure, err: TextIO) -> int:
     return exit_code(failure)
 
 
+def _cache_problem(config: Config) -> CacheUnwritable | None:
+    """Fetches are saved in the cache folder and searches keep their shared state there."""
+    from agent_web.statefile import unwritable
+
+    reason = unwritable(config.cache_dir)
+    return None if reason is None else CacheUnwritable(str(config.cache_dir), reason)
+
+
 def _search(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) -> int:
     from agent_web.output import render_search, search_json
     from agent_web.search import SearchResults
@@ -142,6 +158,8 @@ def _search(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) 
     if not 1 <= page <= MAX_PAGE:
         print(f"web: --page must be between 1 and {MAX_PAGE}", file=err)
         return EXIT_USAGE
+    if problem := _cache_problem(config):
+        return _fail(problem, err)
     outcome = search(str(args.query), page, config, args.engine)
     if not isinstance(outcome, SearchResults):
         return _fail(outcome, err)
@@ -166,9 +184,10 @@ def _fetch(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) -
             file=err,
         )
         return EXIT_USAGE
-    outcome = fetch(
-        str(args.url), config, refresh=bool(args.refresh), whole_page=bool(args.whole_page)
-    )
+    if problem := _cache_problem(config):
+        return _fail(problem, err)
+    whole_page = bool(args.whole_page)
+    outcome = fetch(str(args.url), config, refresh=bool(args.refresh), whole_page=whole_page)
     if not isinstance(outcome, FetchResult):
         return _fail(outcome, err)
     if path_only:
@@ -187,7 +206,10 @@ def _fetch(args: argparse.Namespace, config: Config, out: TextIO, err: TextIO) -
     if args.json:
         print(fetch_json(outcome, offset=args.offset, max_chars=max_chars, find=find), file=out)
     else:
-        print(render_fetch(outcome, offset=args.offset, max_chars=max_chars, find=find), file=out)
+        text = render_fetch(
+            outcome, offset=args.offset, max_chars=max_chars, find=find, whole_page=whole_page
+        )
+        print(text, file=out)
     return exit_code_for(outcome)
 
 
@@ -261,9 +283,10 @@ def _doctor_apis(config: Config, out: TextIO) -> int:
     fixing."""
     from agent_web.config import fallback_order, usable
     from agent_web.search.apis import APIS
-    from agent_web.search.ledger import ledger_for
+    from agent_web.search.ledger import clock, ledger_for
 
     ledger = ledger_for(config)
+    skips = ledger.skips()
     from_env = {name for name, env in API_KEY_ENV.items() if os.environ.get(env, "").strip()}
     first = config.search_engine
     first_unusable = first != "google" and not usable(config, first)
@@ -282,9 +305,8 @@ def _doctor_apis(config: Config, out: TextIO) -> int:
         line = f"{name + ':':<9} {source}; "
         line += f"{ledger.used(name)} searches this month; free tier: {api.free}; "
         line += f"limit: {api.rate_text}"
-        if (skipped := ledger.skipped(name)) is not None:
-            when = time.strftime("%H:%M UTC", time.gmtime(skipped.until))
-            line += f"; skipped until {when}: {skipped.why}"
+        if (skipped := skips.get(name)) is not None:
+            line += f"; skipped until {clock(skipped.until)}: {skipped.why}"
         print(line, file=out)
     unused = [name for name in config.api_keys if name not in order]
     if unused:

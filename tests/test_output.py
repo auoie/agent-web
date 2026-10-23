@@ -440,3 +440,12 @@ def test_search_rendering_names_the_engine_that_answered() -> None:
     assert lines[-1] == "[More results: web search 'q x' --page 2 --engine brave]"
     data = json.loads(search_json(SearchResults("q", hit, engine="Brave", note=note)))
     assert (data["engine"], data["note"]) == ("Brave", note)
+
+
+def test_hints_keep_whole_page() -> None:
+    """Its offsets point into the whole page's text, not the <main> text."""
+    result = html_result("0123456789" * 10)
+    out = render_fetch(result, offset=0, max_chars=30, whole_page=True, fence=fixed_fence)
+    assert out.endswith(f"web fetch {shlex.quote(URL)} --whole-page --offset 30]")
+    found = render_fetch(result, offset=0, max_chars=30, find="5", whole_page=True)
+    assert f"web fetch {shlex.quote(URL)} --whole-page --offset END" in found

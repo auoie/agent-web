@@ -10,11 +10,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import os
 import re
-import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import assert_never
@@ -42,10 +40,11 @@ from agent_web.model import (
     SavedFiles,
     ScannedPdf,
 )
+from agent_web.statefile import atomic_write
 from agent_web.urls import hostname
 
 # Bump whenever conversion output changes, so results from older converters become misses.
-FORMAT_VERSION = 7
+FORMAT_VERSION = 8
 
 
 def url_key(url: str, variant: str = "") -> str:
@@ -290,8 +289,7 @@ class PageCache:
 
     def store(self, url: str, result: FetchResult, variant: str = "") -> Path:
         path = self.page_path(url, variant)
-        _atomic_write(path, json.dumps(encode(result), ensure_ascii=False).encode("utf-8"))
-        self.prune()
+        atomic_write(path, json.dumps(encode(result), ensure_ascii=False).encode("utf-8"))
         return path
 
     def forget(self, url: str, variant: str = "") -> None:
@@ -304,16 +302,17 @@ class PageCache:
         """Write the original response and (unless it's a binary file) the full text."""
         stem = file_stem(url, variant)
         original_path = self.files_dir / f"{stem}{suffix}"
-        _atomic_write(original_path, original)
+        atomic_write(original_path, original)
         text_path = None
         if text is not None:
             text_path = self.text_dir / f"{stem}.md"
-            _atomic_write(text_path, text.encode("utf-8"))
-        self.prune()
+            atomic_write(text_path, text.encode("utf-8"))
         return SavedFiles(original=str(original_path), text=str(text_path) if text_path else None)
 
-    def prune(self) -> None:
-        """Delete the oldest entries once the cache is over its size limit."""
+    def prune(self, keep: Iterable[str | Path] = ()) -> None:
+        """Delete the oldest entries once the cache is over its size limit, never the `keep`
+        files (the fetch just saved them, and the output points at them)."""
+        kept = {Path(p) for p in keep}
         entries: list[tuple[float, int, Path]] = []
         for folder in (self.pages_dir, self.files_dir, self.text_dir):
             if not folder.is_dir():
@@ -326,21 +325,10 @@ class PageCache:
         if total <= self.max_bytes:
             return
         for _, size, path in sorted(entries):
+            if path in kept:
+                continue
             with contextlib.suppress(OSError):
                 path.unlink()
                 total -= size
             if total <= self.max_bytes * 0.8:
                 break
-
-
-def _atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-        Path(tmp).replace(path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            Path(tmp).unlink()
-        raise

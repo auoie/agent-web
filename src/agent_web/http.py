@@ -17,7 +17,7 @@ from agent_web.failures import (
     TooLarge,
     TooManyRedirects,
 )
-from agent_web.urls import hostname, public_addresses, validate_url
+from agent_web.urls import origin, public_addresses, validate_url
 
 if TYPE_CHECKING:
     from curl_cffi.requests import Response
@@ -68,8 +68,9 @@ def download(
     Each hop is validated (scheme, credentials, private addresses, with the connection pinned to
     the checked addresses) and gets cookies only if `cookie_source` returns some for that exact
     URL, so a redirect never carries cookies to another site; `extra_headers` (which can hold a
-    search API's key) go only to `url`'s host. Bodies larger than `max_bytes` are refused. A POST
-    (to a search API) isn't redirected: its answer is returned as it is.
+    search API's key) go only to `url`'s origin (scheme, host and port), so not over plain http
+    either. Bodies larger than `max_bytes` are refused. A POST (to a search API) isn't redirected:
+    its answer is returned as it is.
     """
     from curl_cffi import CurlOpt
     from curl_cffi import requests as curl_requests
@@ -77,7 +78,7 @@ def download(
     current = validate_url(url)
     if isinstance(current, InvalidUrl):
         return current
-    first_host = hostname(current)
+    first_origin = origin(current)
     redirects: list[str] = []
     cookies_sent = False
     for _ in range(MAX_REDIRECTS + 1):
@@ -103,7 +104,7 @@ def download(
                     current,
                     data=post,
                     cookies=cookies or None,
-                    headers=extra_headers if hostname(current) == first_host else None,
+                    headers=extra_headers if origin(current) == first_origin else None,
                     impersonate=target,
                     timeout=timeout,
                     allow_redirects=False,
@@ -142,7 +143,8 @@ def download(
 
 def resolve_pin(url: str, addresses: tuple[str, ...]) -> str | None:
     """A curl RESOLVE entry (`host:port:addr,…`) that makes curl connect to `addresses` instead of
-    looking the host up again. None for IP-literal hosts, which curl doesn't look up."""
+    looking the host up again. None for IP-literal hosts, which curl doesn't look up. curl matches
+    the entry against the name it looks up, so `url` must have an ASCII host (validate_url)."""
     parts = urlsplit(url)
     host = parts.hostname or ""
     try:

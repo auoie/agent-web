@@ -102,3 +102,22 @@ def test_impersonation_matches_cookie_browser() -> None:
     assert impersonation_for("librewolf") == "firefox"
     assert impersonation_for("chrome") == "chrome"
     assert impersonation_for("brave") == "chrome"
+
+
+def test_host_only_cookies_stay_on_their_host() -> None:
+    jar = [cookie("host", "1", "example.com"), cookie("domain", "2", ".example.com")]
+    assert cookies_for_url(jar, "https://example.com/") == {"host": "1", "domain": "2"}
+    assert cookies_for_url(jar, "https://user-content.example.com/") == {"domain": "2"}
+
+
+def test_a_listed_subdomain_gets_its_parent_domains_cookies() -> None:
+    calls: list[str] = []
+
+    def loader(browser: str, domain: str, cookie_file: Path | None) -> list[Cookie]:
+        calls.append(domain)
+        jar = [cookie("session", "s", ".reddit.com"), cookie("pref", "p", "old.reddit.com")]
+        return [c for c in jar if domain in c.domain]  # browser_cookie3's filter: a substring
+
+    source = AllowlistCookieSource("firefox", ["old.reddit.com", "reddit.com"], loader=loader)
+    assert source.for_url("https://old.reddit.com/r/a") == {"session": "s", "pref": "p"}
+    assert calls == ["reddit.com"]
